@@ -110,7 +110,39 @@ Each significant design choice is recorded here with date, context, alternatives
 
 ---
 
-## ADR-006: Cross-platform with Android primary
+## ADR-006: Disable Kotlin incremental compilation for Android builds
+
+**Date:** 2026-09-04
+**Status:** Accepted
+
+**Context:** Android debug build (`flutter build apk --debug`) failed with:
+```
+Could not close incremental caches in <project>\build\<plugin>\kotlin\compileDebugKotlin\cacheable\caches-jvm\jvm\kotlin
+```
+affecting `device_info_plus` and `image_picker_android`. Persisted across `flutter clean`.
+
+**Root cause (diagnosed):** This is a known Windows/Gradle issue where Kotlin's incremental compilation cache cannot close its file handles when the project lives on a path containing **spaces** (`D:\PROJECTS ALL(Programming)\uraan techathon\HealthGuardian`). The backtick-escaped path breaks the KOIN/FilePageCache storage close.
+
+**Alternatives considered:**
+1. Move the project to a space-free path -- rejected (would require relocating the whole project off the established directory).
+2. Manual cache deletion each build -- workaround but fragile and repeated.
+3. Disable incremental compilation -- chosen.
+
+**Decision:** In `android/gradle.properties`:
+```properties
+kotlin.incremental=false
+kotlin.compiler.execution.strategy=in-process
+org.gradle.daemon=false
+```
+
+**Consequences:**
+- Android builds are slightly slower (no Kotlin incremental caching).
+- Build is now reliable and reproducible on this machine.
+- If the project is ever moved to a space-free path, these flags may be reverted for faster builds.
+
+---
+
+## ADR-007: Cross-platform with Android primary
 
 **Date:** 2026-09-01
 **Status:** Accepted
