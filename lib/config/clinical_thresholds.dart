@@ -27,6 +27,19 @@ class News2Thresholds {
     return 0;
   }
 
+  /// SpO2 Scale 2 thresholds (adults with COPD / CO2 retention, %).
+  /// <=83 = 3, 84-85 = 2, 86-87 = 1, 88-92 = 0, 93-94 = 1, 95-96 = 2, >=97 = 3.
+  /// Source: RCP NEWS2 (2017), Table 2 (SpO2 Scale 2).
+  static int spO2Scale2Score(double spo2) {
+    if (spo2 <= 83) return 3;
+    if (spo2 <= 85) return 2;
+    if (spo2 <= 87) return 1;
+    if (spo2 <= 92) return 0;
+    if (spo2 <= 94) return 1;
+    if (spo2 <= 96) return 2;
+    return 3;
+  }
+
   /// Air or oxygen breathing: Air = 0, supplemental O2 = 2.
   /// Source: RCP NEWS2, Table 1, row 2.
   static int airOrOxygenScore(bool onOxygen) => onOxygen ? 2 : 0;
@@ -79,6 +92,24 @@ class News2Thresholds {
   /// Consciousness: AVPU scale. Alert = 0, Voice/Pain/Unresponsive = 3.
   /// Source: RCP NEWS2, Table 1, row 7.
   static int consciousnessScore(bool isAlert) => isAlert ? 0 : 3;
+
+  /// Consciousness by AVPU letter (project adaptation).
+  /// 'A' = 0, 'V' = 2, 'P' = 3, 'U' = 3. Unknown fails closed to 3.
+  /// NOTE: deviates from standard NEWS2 ('V' = 3) per project Tier 1 spec
+  /// §5.1/§5.2 (AVPU gradient shared with pediatric scales). See ADR-009.
+  static int avpuConsciousnessScore(String avpu) {
+    switch (avpu.toUpperCase()) {
+      case 'A':
+        return 0;
+      case 'V':
+        return 2;
+      case 'P':
+      case 'U':
+        return 3;
+      default:
+        return 3;
+    }
+  }
 
   /// Aggregate NEWS2 score from individual component scores.
   static int aggregate({

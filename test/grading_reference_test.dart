@@ -25,6 +25,34 @@ void main() {
     });
   });
 
+  group('NEWS2 SpO2 Scale 2 scoring (RCP Table 2)', () {
+    test('every boundary published value', () {
+      expect(News2Thresholds.spO2Scale2Score(83), 3);
+      expect(News2Thresholds.spO2Scale2Score(84), 2);
+      expect(News2Thresholds.spO2Scale2Score(85), 2);
+      expect(News2Thresholds.spO2Scale2Score(86), 1);
+      expect(News2Thresholds.spO2Scale2Score(87), 1);
+      expect(News2Thresholds.spO2Scale2Score(88), 0);
+      expect(News2Thresholds.spO2Scale2Score(92), 0);
+      expect(News2Thresholds.spO2Scale2Score(93), 1);
+      expect(News2Thresholds.spO2Scale2Score(94), 1);
+      expect(News2Thresholds.spO2Scale2Score(95), 2);
+      expect(News2Thresholds.spO2Scale2Score(96), 2);
+      expect(News2Thresholds.spO2Scale2Score(97), 3);
+    });
+  });
+
+  group('NEWS2 AVPU consciousness scoring (project spec §5.1)', () {
+    test('A=0, V=2, P/U=3, unknown fails closed to 3', () {
+      expect(News2Thresholds.avpuConsciousnessScore('A'), 0);
+      expect(News2Thresholds.avpuConsciousnessScore('V'), 2);
+      expect(News2Thresholds.avpuConsciousnessScore('P'), 3);
+      expect(News2Thresholds.avpuConsciousnessScore('U'), 3);
+      expect(News2Thresholds.avpuConsciousnessScore('a'), 0);
+      expect(News2Thresholds.avpuConsciousnessScore('x'), 3);
+    });
+  });
+
   group('NEWS2 systolic BP scoring (RCP Table 1)', () {
     test('every boundary published value', () {
       expect(News2Thresholds.systolicBpScore(89), 3);

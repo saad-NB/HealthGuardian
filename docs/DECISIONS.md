@@ -183,3 +183,50 @@ org.gradle.daemon=false
 - Requires ~26 additional vignettes (§21.10) — under-triage with missing vitals remains a release blocker.
 - Replaces/augments the §13 `anyMissing` safety check (review flag now always set on missing data).
 - Clinical review open items tracked in spec §21.11 (substitution granularity, P3 vs P4 floor, cyanosis/chills probes).
+
+---
+
+## ADR-009: Project AVPU consciousness score deviates from standard NEWS2 ("V" = 2)
+
+**Date:** 2026-09-05
+**Status:** Accepted (project spec is source of truth; standard NEWS2 cited)
+
+**Context:** Standard NEWS2 scores any non-alert AVPU state as 3 (RCP 2017). Our Tier 1 spec §5.1/§5.2 defines a gradient: Alert = 0, Voice = 2, Pain/Unresponsive = 3, shared with the pediatric scales. The engine and the new `News2Thresholds.avpuConsciousnessScore` implement the spec gradient.
+
+**Decision:** Implement `avpuConsciousnessScore` per spec (`A`=0, `V`=2, `P`/`U`=3, unknown fails closed to 3). The original bool `consciousnessScore` (A vs non-A = 3) is retained for standard-NEWS2 contexts and existing tests.
+
+**Consequences:**
+- The adult engine is consistent with the (also spec'd) pediatric AVPU gradient.
+- This is a documented, intentional deviation from published NEWS2 and is isolated to the engine; any clinical re-review can flip a single function without touching thresholds.
+- Flagged for clinical safety lead review alongside ADR-008.
+
+---
+
+## ADR-010: Adult NEWS2 → tier mapping interpretation
+
+**Date:** 2026-09-05
+**Status:** Accepted
+
+**Context:** Spec §5.1 defines the adult mapping: `≥7 or any parameter = 3 → P1; 5–6 → P2; 3–4 → P3; 1–2 → P4; 0 → P5`. The 2025 note's "any parameter = 3 → minimum P2" is looser than the table's "→ P1".
+
+**Decision:** Implement the **more conservative table reading**: any single parameter scoring 3 **or** aggregate ≥ 7 → P1. This is fail-closed relative to the P2 minimum.
+
+**Consequences:**
+- A lone score-3 parameter (e.g., temp ≤ 35.0, RR ≥ 25, pulse ≥ 131) alone yields P1, matching spec table and the escalate-only principle.
+- Encoded and tested in `TriageEngine._tierFromNews2`.
+
+
+
+## ADR-011: Tier 1 engine as pure synchronous Dart + vanilla state in UI
+
+**Date:** 2026-09-05
+**Status:** Accepted
+
+**Context:** ADR-004 chose BLoC for production state. The initial triage walkthrough UI ships with plain `setState` in a local flow controller, and the decision engine is a pure synchronous class (`TriageEngine`) with no Flutter dependencies.
+
+**Decision:** Ship the increment with vanilla state; migrate the triage flow to BLoC in a follow-up before the flow grows complex. `TriageEngine` stays framework-free so Pillars A–D tests run headless.
+
+**Consequences:**
+- Faster iteration on UI grounding; less boilerplate during greenfield screens.
+- The explicit-audit-trial goal of ADR-004 is preserved because `TriageAnswers` is the single state object and every mutation flows through typed setter-like UI callbacks.
+- Outstanding debt: BLoC for triage flow, session persistence, Tier 2 result merge (ADR-005).
