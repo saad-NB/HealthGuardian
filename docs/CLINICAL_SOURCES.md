@@ -139,3 +139,21 @@ These are absolute safety nets derived from emergency medicine first-principles.
 | Critical temperature | Temp <= 35.0 or >= 39.1 | RCP NEWS2 |
 
 **Implementation:** `lib/config/clinical_thresholds.dart` - `RedFlags` class.
+
+## 6. Missing Vital Signs Handling (SpO₂ / Temperature)
+
+**Sources:** See Tier 1 spec §21.12 and ADR-008. Partial scoring relies on the NEWS2 tables and single-parameter escalation (§2 of this doc). The sepsis screen (§5 Appendix C) is the mandatory safety net when SpO₂ + temperature are both unavailable (spec §21.7).
+
+**Policy summary:**
+- Compute NEWS2 from present parameters only; never score a missing parameter as 0.
+- Context-driven conservative substitution: SpO₂ concern → score 3; temperature concern → score 3 (2 in fever-only, pending review).
+- Tier floor of **P3** whenever any vital is missing; `vitalReviewRequired` always set.
+- Danger gates and single-parameter escalation from present parameters take precedence.
+
+> **Verification pending:** remote/tele-triage CDSS conventions for unavailable oximetry/thermometry are referenced directionally in spec §21.12; exact guideline citations to be confirmed during clinical review (spec §21.11 open item 5).
+
+**Implementation:** `lib/config/clinical_thresholds.dart` (planned) + Tier 1 spec §21.
+
+---
+
+*This document is the single source of truth for clinical references. Any threshold change requires a corresponding DECISIONS.md entry.*

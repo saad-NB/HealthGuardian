@@ -156,3 +156,30 @@ org.gradle.daemon=false
 - Windows desktop used for rapid dev iteration (faster builds)
 - iOS deferred until Android baseline confirmed
 - Model download/adb push workflow optimized for Android
+
+---
+
+## ADR-008: Missing SpO₂ / temperature — hybrid partial-score + context-substitution policy
+
+**Date:** 2026-09-05
+**Status:** Accepted (clinical review pending — see tier-1 spec §21.11)
+
+**Context:** In rural / low-resource settings, a pulse oximeter or thermometer may be unavailable while RR/HR/BP/AVPU are measurable. The Tier 1 spec §18 originally said any missing vital → "cannot compute NEWS2; gates + complaint only; minimum P3" (all-or-nothing). Two defects: (1) it discards grossly abnormal present parameters and risks under-triage; (2) it treats missing SpO₂ and missing temperature as the same problem when they have different compensating logic.
+
+**Alternatives considered:**
+1. **Strict all-or-nothing (current spec text)** — simplest and fully conservative, but data-waste under-triage risk. Rejected.
+2. **Treat unrecordable as abnormal always** — maximum safety but over-triages nearly every child/elder without a thermometer. Rejected as default.
+3. **Partial score + context-driven substitution (chosen)** — hybrid of Options A + C.
+
+**Decision (spec §21):**
+- Compute NEWS2 from all *present* parameters; never discard measured abnormal values.
+- A missing parameter is either *not scored (flagged)* or, when a defined "concerning context" exists, *substituted conservatively* (SpO₂ concern → score 3; temperature concern → score 3 by default, review pending for 2 in fever-only cases).
+- Any missing vital → tier floor of **P3** and mandatory `vitalReviewRequired` flag.
+- Danger gates and single-parameter escalation (from present parameters) always take precedence.
+- Missing SpO₂ AND temperature together → sepsis screen becomes mandatory.
+
+**Consequences:**
+- Partial scores carry a P3 floor so incomplete data can never produce the lowest tiers.
+- Requires ~26 additional vignettes (§21.10) — under-triage with missing vitals remains a release blocker.
+- Replaces/augments the §13 `anyMissing` safety check (review flag now always set on missing data).
+- Clinical review open items tracked in spec §21.11 (substitution granularity, P3 vs P4 floor, cyanosis/chills probes).
