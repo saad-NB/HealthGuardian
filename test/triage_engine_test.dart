@@ -164,14 +164,14 @@ void main() {
   group('Age-gate safety path (§5.2/§5.3)', () {
     test('child with a danger sign goes to P1', () {
       final a = TriageAnswers()
-        ..ageGroup = AgeGroup.child
+        ..ageGroup = AgeGroup.toddler
         ..dangerSigns.add('A4');
       final r = TriageEngine.compute(a);
       expect(r.tier, TriageTier.p1);
     });
 
     test('child with no danger sign fails closed to P3 review', () {
-      final a = TriageAnswers()..ageGroup = AgeGroup.child;
+      final a = TriageAnswers()..ageGroup = AgeGroup.toddler;
       final r = TriageEngine.compute(a);
       expect(r.tier, TriageTier.p3);
       expect(r.vitalReviewRequired, isTrue);

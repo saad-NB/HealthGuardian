@@ -4,14 +4,157 @@ import '../../../triage/models.dart';
 import '../../theme/app_tokens.dart';
 import '../../widgets/answer_chip.dart';
 import '../../widgets/question_scaffold.dart';
+import 'complaint_step.dart';
 import 'danger_signs_step.dart';
+import 'gcs_step.dart';
+import 'probes_step.dart';
 import 'result_step.dart';
+import 'sepsis_step.dart';
 import 'vitals_steps.dart';
 
-/// Drives the linear triage walkthrough (UI/UX plan §5.2, §6).
+/// One node in the dynamic triage walkthrough (spec §2 flow).
 ///
-/// Adult path: age → danger signs → 8 vitals steps → result.
-/// Child/infant path: age → danger signs → result (Peds scales pending).
+/// The step list is rebuilt as answers change so the walkthrough stays
+/// adaptive (e.g. GCS appears only when indicated; sepsis only when engaged).
+sealed class Node {
+  const Node();
+}
+
+/// Vitals field step ('rr', 'spo2', 'sbp', 'hr', 'temp', 'onOxygen',
+/// 'copd', 'capRefill', 'feeding', 'avpu').
+class VitalNode extends Node {
+  const VitalNode(this.field);
+  final String field;
+}
+
+/// Final result.
+class ResultNode extends Node {
+  const ResultNode();
+}
+
+/// Age bracket gate.
+class AgeNode extends Node {
+  const AgeNode();
+}
+
+/// Danger-sign gate.
+class DangerNode extends Node {
+  const DangerNode();
+}
+
+/// Chief complaint (Section D1).
+class ComplaintNode extends Node {
+  const ComplaintNode();
+}
+
+/// GCS component ('eye', 'verbal', 'motor').
+class GcsNode extends Node {
+  const GcsNode(this.component);
+  final String component;
+}
+
+/// Section E probes for a branch.
+class ProbesNode extends Node {
+  const ProbesNode(this.branch);
+  final ProbeBranch branch;
+}
+
+/// Section F sepsis screen.
+class SepsisNode extends Node {
+  const SepsisNode();
+}
+
+/// Whether GCS is indicated at all (spec §6).
+bool _gcsIndicated(TriageAnswers a) {
+  if (a.consciousness != null && a.consciousness != Avpu.alert) return true;
+  if (a.chiefComplaint?.suggestsHeadInjury ?? false) return true;
+  if (a.dangerSigns.isNotEmpty && a.chiefComplaint == ChiefComplaint.headache) {
+    return true;
+  }
+  return false;
+}
+
+/// Whether the sepsis screen is engaged (spec §9 gate).
+bool _sepsisEngaged(TriageAnswers a) {
+  if (a.chiefComplaint == ChiefComplaint.fever) return true;
+  // Shown when temperature or SpO2 was not measured.
+  if (a.tempMissing || a.spo2Missing) return true;
+  if (a.sepsis.f1 == true) return true;
+  return false;
+}
+
+/// Builds the ordered walkthrough node list for the current answers.
+List<Node> _buildNodes(TriageAnswers a) {
+  final nodes = <Node>[
+    const AgeNode(),
+    const DangerNode(),
+  ];
+
+  // Vitals, scaled by age bracket.
+  final age = a.ageGroup;
+  if (age != null) {
+    switch (age.scale) {
+      case VitalScale.news2:
+        nodes.addAll(const [
+          VitalNode('rr'),
+          VitalNode('spo2'),
+          VitalNode('sbp'),
+          VitalNode('hr'),
+          VitalNode('temp'),
+          VitalNode('onOxygen'),
+          VitalNode('copd'),
+          VitalNode('avpu'),
+        ]);
+      case VitalScale.pedsNews2:
+        nodes.addAll(const [
+          VitalNode('rr'),
+          VitalNode('spo2'),
+          VitalNode('hr'),
+          VitalNode('temp'),
+          VitalNode('capRefill'),
+          VitalNode('onOxygen'),
+          VitalNode('avpu'),
+        ]);
+      case VitalScale.pews:
+        nodes.addAll(const [
+          VitalNode('rr'),
+          VitalNode('spo2'),
+          VitalNode('hr'),
+          VitalNode('temp'),
+          VitalNode('feeding'),
+          VitalNode('onOxygen'),
+        ]);
+    }
+  }
+
+  // Chief complaint.
+  nodes.add(const ComplaintNode());
+
+  // GCS when indicated.
+  if (_gcsIndicated(a)) {
+    nodes.addAll(const [
+      GcsNode('eye'),
+      GcsNode('verbal'),
+      GcsNode('motor'),
+    ]);
+  }
+
+  // Probes for a branch.
+  final branch = a.chiefComplaint?.branch;
+  if (branch != null) {
+    nodes.add(ProbesNode(branch));
+  }
+
+  // Sepsis when engaged.
+  if (_sepsisEngaged(a)) {
+    nodes.add(const SepsisNode());
+  }
+
+  nodes.add(const ResultNode());
+  return nodes;
+}
+
+/// Drives the adaptive triage walkthrough (UI/UX plan §5.2, §6–§9).
 class TriageFlowScreen extends StatefulWidget {
   const TriageFlowScreen({super.key});
 
@@ -24,105 +167,152 @@ class _TriageFlowScreenState extends State<TriageFlowScreen> {
   int _step = 0;
   bool _jumpedToResult = false;
 
-  static const int _ageIndex = 0;
-  static const int _dangerIndex = 1;
-  static const int _vitalStart = 2;
-  static const int _vitalStepCount = 8;
-
-  int get _vitalCount => _answers.ageGroup?.usesNews2 ?? false
-      ? _vitalStepCount
-      : 0;
-  int get _resultIndex => _vitalStart + _vitalCount;
-  int get _stepCount => _resultIndex + 1;
+  List<Node> get _nodes => _buildNodes(_answers);
+  int get _nodeCount => _nodes.length;
 
   void _goTo(int index) => setState(() {
-        _step = index;
+        _step = index.clamp(0, _nodeCount - 1);
         _jumpedToResult = false;
       });
 
   void _next() {
-    if (_step < _stepCount - 1) {
+    if (_step < _nodeCount - 1) {
       _goTo(_step + 1);
     } else {
-      _goTo(_resultIndex);
+      _goTo(_nodeCount - 1);
     }
   }
 
-  void _undo() => _goTo((_step - 1).clamp(0, _stepCount - 1));
-
   void _restart() => setState(() {
         _answers.reset();
-        _step = _ageIndex;
+        _step = 0;
         _jumpedToResult = false;
       });
 
-  void _selectAge(AgeGroup g) {
-    setState(() => _answers.ageGroup = g);
-    _next();
-  }
-
-  void _jumpToResult() {
-    setState(() {
-      _step = _resultIndex;
-      _jumpedToResult = true;
-    });
+  void _dangerContinue() {
+    if (_answers.dangerSigns.isNotEmpty) {
+      setState(() {
+        _step = _nodeCount - 1;
+        _jumpedToResult = true;
+      });
+    } else {
+      _next();
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final nodes = _buildNodes(_answers);
+    final idx = _step.clamp(0, nodes.length - 1);
+    final node = nodes[idx];
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(title: const Text('Triage')),
-      body: _buildStep(),
+      body: _buildNode(node, idx, nodes.length),
     );
   }
 
-  Widget _buildStep() {
-    switch (_step) {
-      case _ageIndex:
-        return _ageGate();
-      case _dangerIndex:
+  int get _vitalStartIndex {
+    final nodes = _buildNodes(_answers);
+    for (var i = 0; i < nodes.length; i++) {
+      if (nodes[i] is VitalNode) return i;
+    }
+    return -1;
+  }
+
+  Widget _buildNode(Node node, int index, int count) {
+    switch (node) {
+      case AgeNode():
+        return _ageGate(index, count);
+      case DangerNode():
         return DangerSignsStep(
           answers: _answers,
-          progress: _step,
-          steps: _stepCount,
-          onContinue: () => _next(),
-          onResult: _jumpToResult,
-          onBack: () => _goTo(_ageIndex),
+          progress: index,
+          steps: count,
+          onContinue: _dangerContinue,
+          onBack: () => _goTo(index - 1),
           onRestart: _restart,
         );
-      default:
-        if (_step == _resultIndex) {
-          return ResultStep(
-            answers: _answers,
-            onEditVitals: _vitalCount > 0 ? () => _goTo(_vitalStart) : null,
-            onEditDanger: () => _goTo(_dangerIndex),
-            onRestart: _restart,
-            jumpedFromDanger: _jumpedToResult,
-          );
-        }
-        final vitalStep = _step - _vitalStart;
+      case VitalNode(:final field):
         return VitalsStep(
-          step: vitalStep,
+          field: field,
+          age: _answers.ageGroup ?? AgeGroup.adult,
           answers: _answers,
-          progress: _step,
-          steps: _stepCount,
-          onChanged: () => _next(),
+          progress: index,
+          steps: count,
+          onChanged: _next,
           onRefresh: () => setState(() {}),
-          onBack: _step > _vitalStart
-              ? () => _goTo(_step - 1)
-              : () => _goTo(_dangerIndex),
+          onBack: index > 0 ? () => _goTo(index - 1) : null,
           onRestart: _restart,
+        );
+      case ComplaintNode():
+        return ComplaintStep(
+          answers: _answers,
+          progress: index,
+          steps: count,
+          onAdvance: _next,
+          onBack: () => _goTo(index - 1),
+          onRestart: _restart,
+        );
+      case GcsNode(:final component):
+        return GcsStep(
+          component: component,
+          answers: _answers,
+          progress: index,
+          steps: count,
+          onChanged: _next,
+          onRefresh: () => setState(() {}),
+          onBack: () => _goTo(index - 1),
+          onRestart: _restart,
+        );
+      case ProbesNode(:final branch):
+        return ProbesStep(
+          branch: branch,
+          answers: _answers,
+          progress: index,
+          steps: count,
+          onContinue: _next,
+          onBack: () => _goTo(index - 1),
+          onRestart: _restart,
+        );
+      case SepsisNode():
+        return SepsisStep(
+          answers: _answers,
+          progress: index,
+          steps: count,
+          onContinue: _next,
+          onBack: () => _goTo(index - 1),
+          onRestart: _restart,
+        );
+      case ResultNode():
+        final vitalCount =
+            _buildNodes(_answers).whereType<VitalNode>().length;
+        return ResultStep(
+          answers: _answers,
+          onEditVitals: vitalCount > 0
+              ? () => _goTo(vitalCount > 0 ? _vitalStartIndex : index)
+              : null,
+          onEditDanger: () => _goTo(_dangerIndex()),
+          onRestart: _restart,
+          jumpedFromDanger: _jumpedToResult,
         );
     }
   }
 
-  Widget _ageGate() {
+  int _dangerIndex() {
+    final nodes = _buildNodes(_answers);
+    for (var i = 0; i < nodes.length; i++) {
+      if (nodes[i] is DangerNode) return i;
+    }
+    return 0;
+  }
+
+  Widget _ageGate(int index, int count) {
     return QuestionScaffold(
-      progress: _step + 1,
-      steps: _stepCount,
+      progress: index + 1,
+      steps: count,
       onBack: null,
-      onUndo: _undo,
+      onUndo: () => _goTo(index - 1),
       onRestart: _restart,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -136,14 +326,18 @@ class _TriageFlowScreenState extends State<TriageFlowScreen> {
             AnswerChip(
               label: g.label,
               detail: g.detail,
-              icon: switch (g) {
-                AgeGroup.infant => Icons.child_care,
-                AgeGroup.child => Icons.child_friendly,
-                AgeGroup.adult => Icons.person,
-                AgeGroup.olderAdult => Icons.elderly,
+              icon: switch (g.scale) {
+                VitalScale.pews => Icons.child_care,
+                VitalScale.pedsNews2 => Icons.child_friendly,
+                VitalScale.news2 => g == AgeGroup.olderAdult
+                    ? Icons.elderly
+                    : Icons.person,
               },
               selected: _answers.ageGroup == g,
-              onSelected: () => _selectAge(g),
+              onSelected: () {
+                setState(() => _answers.ageGroup = g);
+                _next();
+              },
             ),
             const SizedBox(height: AppMetrics.answerGap),
           ],

@@ -230,3 +230,53 @@ org.gradle.daemon=false
 - Faster iteration on UI grounding; less boilerplate during greenfield screens.
 - The explicit-audit-trial goal of ADR-004 is preserved because `TriageAnswers` is the single state object and every mutation flows through typed setter-like UI callbacks.
 - Outstanding debt: BLoC for triage flow, session persistence, Tier 2 result merge (ADR-005).
+
+## ADR-012: Multi-scale Tier 1 vitals engine (�5.2/�5.3) with complaint probes (�7/�8), GCS (�6), and sepsis screen (�9)
+
+**Date:** 2026-09-06
+**Status:** Accepted
+
+**Context:** The initial engine only scored adult NEWS2. Spec �5.2 (Peds-NEWS2, 6 age brackets), �5.3 (neonatal PEWS), �6 (GCS tier mapping), �7/�8 (chief complaint + scored probes), and �9 (sepsis screen) were unimplemented. Age brackets were restructured into 9 groups (ADR from spec �3) mapping to three vital scales.
+
+**Decision:**
+- **Scales:** AgeGroup.scale selects NEWS2 (16+), Peds-NEWS2 (1-15y, per-bracket thresholds), or PEWS (neonates). Each scale produces its own aggregate + tier.
+- **Vitals flow** is field-based (VitalsStep(field: ...)) and scale-aware: adults collect rr/spo2/sbp/hr/temp/onOxygen/copd/avpu; children collect rr/spo2/hr/temp/capRefill/onOxygen/avpu; neonates collect rr/spo2/hr/temp/feeding/onOxygen. Copd is adult-only; capillary refill and feeding are pediatric/neonatal-only.
+- **Dynamic step list:** The flow node list is rebuilt from answers, so GCS appears only when indicated (AVPU!alert, head-injury complaint, or headache danger), and the sepsis screen appears only when engaged (fever complaint, or unmeasured temp/SpO2, or F1 answered Yes).
+- **Complaint probes (�7/�8):** 18 chief-complaint chips; 6 branches carry scored probes. Branch tier maps: chest >=6 P1 / >=4 P2; breathing >=6 P1 / >=3 P2; fever/headache/abdo >=5 P1 / >=3 P2; psych >=6 P1 / >=3 P2. E-C4 (tearing back pain) forces P1 regardless. E-B1 ("speak in full sentences") is inverted -- No = concern (+3).
+- **GCS (�6):** three component steps (eye/verbal/motor), stored as three ints so a partial assessment never counts. Tier via GcsThresholds.tierFromGcs; head-injury context escalates 9-12 to P1 and 14+ to a P4 floor.
+- **Sepsis (�9):** adult qSOFA (F2+F3+F4; >=2 P1, ==1 P2); child pedSIRS from measured vitals (temp/RR/HR age-adjusted 95th percentiles, F-screen as fallback); neonates get no F-screen sepsis tier (clinical judgement via danger gates). F1 gates escalation.
+- **Missing-vitals (�21)** still applies to every scale: partial scoring, context substitution (adult temp/spo2 substitute 3, peds temp substitutes 2 -- peds max param), P3 floor, vitalReviewRequired. TriageResult.scale records which scale produced the aggregate.
+
+**Alternatives considered:**
+1. Separate standalone scoring classes per scale -- rejected: engine stays a single pure class dispatching by scale.
+2. Wizard divergence per age at the age gate -- rejected: current screen-first flow with adaptive step list keeps one linear UI.
+
+**Consequences:**
+- One linear walkthrough adapts to age; total taps grow with detail (spec-compliant for the populations served).
+- AgeGroup.child replaced by 6 explicit pediatric brackets + neonate; existing tests updated.
+- GCS stored as gcsEye/gcsVerbal/gcsMotor on TriageAnswers (partial-safe); the GcsScores record class removed.
+- Engine, thresholds, probes are pure Dart (Pillars A-D headless) and covered by multi_scale_engine_test.dart (23 tests) and multi_scale_flow_widget_test.dart (6 tests).
+
+## ADR-013: Blood pressure is an optional (scored-if-provided) vital for pediatric and neonatal scales
+
+**Date:** 2026-09-06
+**Status:** Accepted
+
+**Context:** The pediatric (Peds-NEWS2) and neonatal (PEWS) walkthroughs deliberately never collect systolic BP -- in the rural low-resource target setting a pediatric/neonate BP cuff is often unavailable, and BP is not part of the app's collectable set for those ages. But the engine's per-scale "missing vitals" list included `sbp == null`, so every child and neonate triaged through the app always showed the missing-vitals review banner and floored to P3 even with all collectable vitals normal. This contradicted the intended measurement set (ADR-012: children/neonates collect rr/spo2/hr/temp/+, not BP) and made the walkthrough useless for its primary audience.
+
+**Decision:**
+- SBP is **optional** for `VitalScale.pedsNews2` and `VitalScale.pews`: it is removed from those scales' `missing` list, so its absence never sets `vitalReviewRequired` and never triggers the §21 P3 floor.
+- SBP is still **scored if provided**: if a caregiver does have a reading, the peds/neonatal SBP tables apply and a score-3 parameter still fires single-parameter P1 escalation.
+- When SBP is not measured, the result screen shows an **informational** reason ("Blood pressure not measured (optional for this age group).") -- satisfying §21 rule 9 ("missing ≠ silent-normal") without escalating.
+- Adult `VitalScale.news2` is unchanged: SBP remains a required vital (the adult UI always collects it; missing → review + P3 floor).
+
+**Rationale:** Failing closed on a parameter the app was never designed to collect under-triages-by-flag the entire pediatric population. Shock risk for children/neonates remains covered by the collected set (capillary refill, feeding/consciousness, RR/HR extremes, sepsis screen for fever). This is an intentional measurement-set reduction for the low-resource field context, not an accidental omission.
+
+**Alternatives considered:**
+1. Add a BP step to the pediatric/neonatal walkthrough -- rejected: requires cuffs the target users often lack and contradicts the app's low-resource design.
+2. Keep BP required but context-guard the P3 floor (floor only when a shock context exists) -- deferred: adds subjective rules; revisit if capillary-refill or feeding signals prove insufficient.
+
+**Consequences:**
+- Fully-measured (per collectable set) healthy child now maps to P5; healthy neonate to the P4 age floor (spec §5.3), with no review banner.
+- Genuinely-missing required params (HR, RR, consciousness, temperature, SpO2, refill/feeding) still floor to P3 review -- fail-closed preserved.
+- Windows e2e harness scenarios `toddlerPedsNews2CapRefill` and `newbornPewsFeedingReview` updated to assert the corrected tiers.

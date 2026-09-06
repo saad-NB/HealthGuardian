@@ -30,7 +30,8 @@ class ResultStep extends StatelessWidget {
     final lines = <String>[
       'Sehat Nigraan triage result',
       '${result.tier.label} - action ${result.tier.response}.',
-      'NEWS2 score: ${result.aggregate?.toString() ?? 'n/a'}',
+      if (result.scale != null)
+        '${result.scale!.label} score: ${result.aggregate?.toString() ?? 'n/a'}',
       if (result.vitalReviewRequired)
         'NOTE: some vital signs were missing - clinical review required.',
       'Why:', ...result.reasons,
@@ -48,8 +49,8 @@ class ResultStep extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final result = TriageEngine.compute(answers);
-    final isAdult = answers.ageGroup?.usesNews2 ?? false;
+          final result = TriageEngine.compute(answers);
+    final scale = result.scale;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(AppMetrics.margin),
@@ -126,9 +127,9 @@ class ResultStep extends StatelessWidget {
               ),
             ),
           ],
-          if (isAdult)
+          if (scale != null)
             Text(
-              'NEWS2 (vitals early-warning) score: '
+              '${scale.label} (vitals early-warning) score: '
               '${result.aggregate?.toString() ?? 'n/a'}',
               style: Theme.of(context).textTheme.bodyMedium,
             ),

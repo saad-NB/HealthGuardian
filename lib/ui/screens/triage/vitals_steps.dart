@@ -2,16 +2,19 @@ import 'package:flutter/material.dart';
 
 import '../../../triage/models.dart';
 import '../../theme/app_tokens.dart';
+import '../../widgets/answer_chip.dart';
 import '../../widgets/question_scaffold.dart';
 import '../../widgets/segmented_yes_no.dart';
 import '../../widgets/stepper_tiles.dart';
 
-/// One focused vital-sign question (UI/UX plan §6.3).
-/// Section B fields B1-B8, one per step.
+/// One focused vital-sign question (UI/UX plan §6.3), selected by [field].
+/// The [age] bracket drives quick values and Continue defaults so each scale
+/// (NEWS2 / Peds-NEWS2 / PEWS) collects exactly its own fields.
 class VitalsStep extends StatelessWidget {
   const VitalsStep({
     super.key,
-    required this.step,
+    required this.field,
+    required this.age,
     required this.answers,
     required this.progress,
     required this.steps,
@@ -21,7 +24,11 @@ class VitalsStep extends StatelessWidget {
     required this.onRestart,
   });
 
-  final int step;
+  /// One of: rr, spo2, sbp, hr, temp, onOxygen, copd, avpu, capRefill, feeding.
+  final String field;
+
+  /// The age bracket this walkthrough is running for (scale is derived).
+  final AgeGroup age;
   final TriageAnswers answers;
   final int progress;
   final int steps;
@@ -33,42 +40,52 @@ class VitalsStep extends StatelessWidget {
   final VoidCallback? onBack;
   final VoidCallback onRestart;
 
+  bool get _neonatal => age.scale == VitalScale.pews;
+
   String get _title {
-    switch (step) {
-      case 0:
+    switch (field) {
+      case 'rr':
         return 'Breaths per minute (breathing rate)';
-      case 1:
+      case 'spo2':
         return 'Oxygen level (SpO2, %)';
-      case 2:
+      case 'sbp':
         return 'Systolic blood pressure (mmHg)';
-      case 3:
+      case 'hr':
         return 'Heart rate (beats per minute)';
-      case 4:
+      case 'temp':
         return 'Temperature (°C)';
-      case 5:
+      case 'onOxygen':
         return 'Is the patient on oxygen?';
-      case 6:
+      case 'copd':
         return 'Known COPD or CO2 retention?';
+      case 'capRefill':
+        return 'Capillary refill time';
+      case 'feeding':
+        return 'How alert is the baby and how is it feeding?';
       default:
         return 'How alert is the patient?';
     }
   }
 
   String get _explain {
-    switch (step) {
-      case 0:
+    switch (field) {
+      case 'rr':
         return 'Count full breaths for 30 seconds and double it.';
-      case 1:
+      case 'spo2':
         return 'A pulse oximeter shows this number, usually 95-100%.';
-      case 2:
+      case 'sbp':
         return 'The higher number of a blood pressure reading.';
-      case 3:
+      case 'hr':
         return 'Count heartbeats for 30 seconds and double it.';
-      case 4:
+      case 'temp':
         return 'Usual is around 37 °C. Measure if a thermometer is available.';
-      case 5:
-        return 'Is the patient using oxygen now (mask, nasal tube)?';
-      case 6:
+      case 'capRefill':
+        return 'Press the fingernail or toe for 5 seconds and count how long '
+            'the pink colour takes to return.';
+      case 'feeding':
+        return 'A baby who is not feeding or not waking is an emergency '
+            'warning sign.';
+      case 'copd':
         return 'Known lung disease such as COPD. Changes how oxygen '
             'level is judged.';
       default:
@@ -96,14 +113,16 @@ class VitalsStep extends StatelessWidget {
             ),
           ],
           const SizedBox(height: 28),
-          switch (step) {
-            0 => _rr(),
-            1 => _spo2(),
-            2 => _sbp(),
-            3 => _hr(),
-            4 => _temp(),
-            5 => _onOxygen(),
-            6 => _copd(),
+          switch (field) {
+            'rr' => _rr(),
+            'spo2' => _spo2(),
+            'sbp' => _sbp(),
+            'hr' => _hr(),
+            'temp' => _temp(),
+            'onOxygen' => _onOxygen(),
+            'copd' => _copd(),
+            'capRefill' => _capRefill(),
+            'feeding' => _feeding(),
             _ => _avpu(),
           },
           const SizedBox(height: 28),
@@ -117,24 +136,43 @@ class VitalsStep extends StatelessWidget {
     );
   }
 
+  /// Value controls update the current step in place; only [onChanged]
+  /// (the underlying Continue button) advances to the next question.
+  void _update(void Function() mutate) {
+    mutate();
+    onRefresh();
+  }
+
   void _continue() {
-    switch (step) {
-      case 0:
-        answers.respiratoryRate ??= 16;
+    switch (field) {
+      case 'rr':
+        answers.respiratoryRate ??= _neonatal ? 48 : 16;
         break;
-      case 1:
-        if (!answers.spo2Missing) answers.spo2 ??= 96;
+      case 'spo2':
+        if (!answers.spo2Missing) answers.spo2 ??= _neonatal ? 97 : 96;
         break;
-      case 2:
-        answers.systolicBp ??= 120;
+      case 'sbp':
+        answers.systolicBp ??= _neonatal ? 70 : 120;
         break;
-      case 3:
-        answers.heartRate ??= 70;
+      case 'hr':
+        answers.heartRate ??= _neonatal ? 140 : 70;
         break;
-      case 4:
+      case 'temp':
         if (!answers.tempMissing) answers.temperature ??= 37.0;
         break;
-      case 7:
+      case 'onOxygen':
+        answers.onOxygen ??= false;
+        break;
+      case 'copd':
+        answers.copdCo2Retention ??= false;
+        break;
+      case 'capRefill':
+        answers.capillaryRefill ??= CapillaryRefill.under2;
+        break;
+      case 'feeding':
+        answers.neonatalConsciousness ??= NeonatalConsciousness.feedingWell;
+        break;
+      case 'avpu':
         answers.consciousness ??= Avpu.alert;
         break;
     }
@@ -143,16 +181,14 @@ class VitalsStep extends StatelessWidget {
 
   Widget _rr() {
     return StepperTiles(
-      value: answers.respiratoryRate ?? 16,
-      onChanged: (v) {
-        answers.respiratoryRate = v;
-        onChanged();
-      },
+      value: answers.respiratoryRate ?? (_neonatal ? 48 : 16),
+      onChanged: (v) => _update(() => answers.respiratoryRate = v),
       min: 4,
       max: 60,
       step: 1,
       unit: '/min',
-      quickValues: const [12, 16, 20, 24],
+      quickValues: _neonatal ? const [30, 45, 60] : const [12, 16, 20, 24],
+      manualMax: 200,
     );
   }
 
@@ -160,12 +196,11 @@ class VitalsStep extends StatelessWidget {
     final value = answers.spo2;
     final missing = answers.spo2Missing;
     return StepperTiles(
-      value: value ?? 96,
-      onChanged: (v) {
+      value: value ?? (_neonatal ? 97 : 96),
+      onChanged: (v) => _update(() {
         answers.spo2 = v.round().toDouble();
         answers.spo2Missing = false;
-        onChanged();
-      },
+      }),
       min: 50,
       max: 100,
       step: 1,
@@ -173,12 +208,14 @@ class VitalsStep extends StatelessWidget {
       quickValues: const [92, 95, 98],
       canBeMissing: true,
       missing: missing,
+      manualMin: 1,
+      manualMax: 100,
       onMissing: () {
         if (!missing) {
           answers.spo2 = null;
           answers.spo2Missing = true;
         } else {
-          answers.spo2 = 96;
+          answers.spo2 = _neonatal ? 97 : 96;
           answers.spo2Missing = false;
         }
         onRefresh();
@@ -188,31 +225,33 @@ class VitalsStep extends StatelessWidget {
 
   Widget _sbp() {
     return StepperTiles(
-      value: answers.systolicBp ?? 120,
-      onChanged: (v) {
+      value: answers.systolicBp ?? (_neonatal ? 70 : 120),
+      onChanged: (v) => _update(() {
         answers.systolicBp = v.round().toDouble();
-        onChanged();
-      },
+      }),
       min: 60,
       max: 260,
       step: 5,
       unit: 'mmHg',
-      quickValues: const [100, 120, 140],
+      quickValues: _neonatal ? const [70, 80, 90] : const [100, 120, 140],
+      manualMin: 20,
+      manualMax: 400,
     );
   }
 
   Widget _hr() {
     return StepperTiles(
-      value: answers.heartRate ?? 70,
-      onChanged: (v) {
+      value: answers.heartRate ?? (_neonatal ? 140 : 70),
+      onChanged: (v) => _update(() {
         answers.heartRate = v.round().toDouble();
-        onChanged();
-      },
+      }),
       min: 20,
       max: 220,
       step: 1,
       unit: 'bpm',
-      quickValues: const [60, 72, 90],
+      quickValues: _neonatal ? const [120, 140, 160] : const [60, 72, 90],
+      manualMin: 1,
+      manualMax: 600,
     );
   }
 
@@ -221,11 +260,10 @@ class VitalsStep extends StatelessWidget {
     final missing = answers.tempMissing;
     return StepperTiles(
       value: value ?? 37.0,
-      onChanged: (v) {
+      onChanged: (v) => _update(() {
         answers.temperature = v;
         answers.tempMissing = false;
-        onChanged();
-      },
+      }),
       min: 34.0,
       max: 43.0,
       step: 0.1,
@@ -234,6 +272,8 @@ class VitalsStep extends StatelessWidget {
       quickValues: const [36.0, 37.0, 38.0],
       canBeMissing: true,
       missing: missing,
+      manualMin: 25.0,
+      manualMax: 45.0,
       onMissing: () {
         if (!missing) {
           answers.temperature = null;
@@ -250,20 +290,56 @@ class VitalsStep extends StatelessWidget {
   Widget _onOxygen() {
     return SegmentedYesNo(
       value: answers.onOxygen,
-      onChanged: (v) {
-        answers.onOxygen = v;
-        onChanged();
-      },
+      onChanged: (v) => _update(() => answers.onOxygen = v),
     );
   }
 
   Widget _copd() {
     return SegmentedYesNo(
       value: answers.copdCo2Retention,
-      onChanged: (v) {
-        answers.copdCo2Retention = v;
-        onChanged();
-      },
+      onChanged: (v) => _update(() => answers.copdCo2Retention = v),
+    );
+  }
+
+  Widget _capRefill() {
+    return Column(
+      children: [
+        for (final r in CapillaryRefill.values) ...[
+          AnswerChip(
+            label: r.label,
+            detail: r.detail,
+            icon: switch (r) {
+              CapillaryRefill.under2 => Icons.bolt,
+              CapillaryRefill.twoTo3 => Icons.schedule,
+              CapillaryRefill.over3 => Icons.timer_off,
+            },
+            selected: answers.capillaryRefill == r,
+            onSelected: () => _update(() => answers.capillaryRefill = r),
+          ),
+          const SizedBox(height: AppMetrics.answerGap),
+        ],
+      ],
+    );
+  }
+
+  Widget _feeding() {
+    return Column(
+      children: [
+        for (final c in NeonatalConsciousness.values) ...[
+          AnswerChip(
+            label: c.label,
+            detail: c.detail,
+            icon: switch (c) {
+              NeonatalConsciousness.feedingWell => Icons.sentiment_satisfied,
+              NeonatalConsciousness.drowsyPoor => Icons.sentiment_neutral,
+              NeonatalConsciousness.unresponsiveNoFeed => Icons.sentiment_dissatisfied,
+            },
+            selected: answers.neonatalConsciousness == c,
+            onSelected: () => _update(() => answers.neonatalConsciousness = c),
+          ),
+          const SizedBox(height: AppMetrics.answerGap),
+        ],
+      ],
     );
   }
 
@@ -288,10 +364,7 @@ class VitalsStep extends StatelessWidget {
         color: selected ? AppColors.teal700 : AppColors.surface,
         borderRadius: BorderRadius.circular(14),
         child: InkWell(
-          onTap: () {
-            answers.consciousness = level;
-            onChanged();
-          },
+          onTap: () => _update(() => answers.consciousness = level),
           borderRadius: BorderRadius.circular(14),
           child: Container(
             height: AppMetrics.minTouch,

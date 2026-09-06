@@ -7,8 +7,9 @@ import '../../widgets/question_scaffold.dart';
 import '../../widgets/segmented_yes_no.dart';
 
 /// Section A — "Does the patient have ANY of these right now?"
-/// (UI/UX plan §7.3). Any Yes shows a sticky warning and jumps to the P1
-/// result via [onResult]. No keeps the list open; Continue moves on.
+/// (UI/UX plan §7.3). Any Yes marks that row inline (so the user sees exactly
+/// which danger was selected, without the list jumping) and Continue then
+/// routes to the P1 result via [onDangerResult].
 class DangerSignsStep extends StatefulWidget {
   const DangerSignsStep({
     super.key,
@@ -16,7 +17,6 @@ class DangerSignsStep extends StatefulWidget {
     required this.progress,
     required this.steps,
     required this.onContinue,
-    required this.onResult,
     required this.onBack,
     required this.onRestart,
   });
@@ -25,7 +25,6 @@ class DangerSignsStep extends StatefulWidget {
   final int progress;
   final int steps;
   final VoidCallback onContinue;
-  final VoidCallback onResult;
   final VoidCallback? onBack;
   final VoidCallback onRestart;
 
@@ -38,16 +37,16 @@ class _DangerSignsStepState extends State<DangerSignsStep> {
     setState(() {
       if (value) {
         widget.answers.dangerSigns.add(id);
-        widget.onResult();
+        widget.answers.dangerNo.remove(id);
       } else {
         widget.answers.dangerSigns.remove(id);
+        widget.answers.dangerNo.add(id);
       }
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    final anyDanger = widget.answers.dangerSigns.isNotEmpty;
     return QuestionScaffold(
       progress: widget.progress + 1,
       steps: widget.steps,
@@ -63,52 +62,11 @@ class _DangerSignsStepState extends State<DangerSignsStep> {
           ),
           const SizedBox(height: 4),
           Text(
-            'If any of these is true, get emergency help immediately.',
+            'If any of these is true, get emergency help immediately. '
+            'Selected dangers will be collected here; you review them all '
+            'before continuing.',
             style: Theme.of(context).textTheme.bodyMedium,
           ),
-          if (anyDanger) ...[
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: AppColors.tierP1.withValues(alpha: 0.18),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: AppColors.tierP1),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.dangerous, color: AppColors.tierP1),
-                  const SizedBox(width: 12),
-                  const Expanded(
-                    child: Text(
-                      'A danger sign was selected - treated as an '
-                      'emergency.',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 12),
-            FilledButton.icon(
-              onPressed: widget.onResult,
-              icon: const Icon(Icons.arrow_forward),
-              label: const Text('See result now'),
-              style: FilledButton.styleFrom(
-                backgroundColor: AppColors.tierP1,
-                foregroundColor: Colors.white,
-                minimumSize: const Size.fromHeight(56),
-                textStyle: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-          ],
           const SizedBox(height: 20),
           for (final d in dangerSigns) ...[
             _dangerRow(d),
@@ -126,14 +84,28 @@ class _DangerSignsStepState extends State<DangerSignsStep> {
   }
 
   Widget _dangerRow(DangerSignDefinition d) {
-    final value = widget.answers.dangerSigns.contains(d.id);
+    final bool? value;
+    if (widget.answers.dangerSigns.contains(d.id)) {
+      value = true;
+    } else if (widget.answers.dangerNo.contains(d.id)) {
+      value = false;
+    } else {
+      value = null;
+    }
+    final isDanger = widget.answers.dangerSigns.contains(d.id);
     return Container(
       key: ValueKey('danger-${d.id}'),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: AppColors.surface,
+        color: isDanger
+            ? AppColors.tierP1.withValues(alpha: 0.10)
+            : AppColors.surface,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
+        border: Border.all(
+          color: isDanger
+              ? AppColors.tierP1.withValues(alpha: 0.8)
+              : Colors.white.withValues(alpha: 0.10),
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -164,6 +136,26 @@ class _DangerSignsStepState extends State<DangerSignsStep> {
             value: value,
             onChanged: (v) => _set(d.id, v),
           ),
+          if (isDanger) ...[
+            const SizedBox(height: 10),
+            const Row(
+              children: [
+                Icon(Icons.dangerous, color: AppColors.tierP1, size: 20),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Selected as an emergency danger signal - this will '
+                    'route to the P1 result on Continue.',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );

@@ -201,8 +201,8 @@ void main() {
     test('verbal response maps 1-5', () {
       expect(GcsThresholds.verbalResponse('oriented'), 5);
       expect(GcsThresholds.verbalResponse('confused'), 4);
-      expect(GcsThresholds.verbalResponse('inappropriate'), 3);
-      expect(GcsThresholds.verbalResponse('incomprehensible'), 2);
+      expect(GcsThresholds.verbalResponse('words'), 3);
+      expect(GcsThresholds.verbalResponse('sounds'), 2);
       expect(GcsThresholds.verbalResponse('none'), 1);
     });
     test('verbal response fails closed on unknown input', () {
@@ -211,9 +211,9 @@ void main() {
 
     test('motor response maps 1-6', () {
       expect(GcsThresholds.motorResponse('obeys'), 6);
-      expect(GcsThresholds.motorResponse('localizes'), 5);
-      expect(GcsThresholds.motorResponse('flexion'), 4);
-      expect(GcsThresholds.motorResponse('abnormal'), 3);
+      expect(GcsThresholds.motorResponse('localises'), 5);
+      expect(GcsThresholds.motorResponse('withdraws'), 4);
+      expect(GcsThresholds.motorResponse('flexion'), 3);
       expect(GcsThresholds.motorResponse('extension'), 2);
       expect(GcsThresholds.motorResponse('none'), 1);
     });

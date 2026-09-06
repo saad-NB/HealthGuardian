@@ -13,6 +13,16 @@ library;
 
 enum TriageLevel { routine, urgent, emergency }
 
+/// Band scorer: [bounds] are the inclusive upper edges of each band, with the
+/// matching [scores]; any value above the last bound scores [elseScore].
+/// Source: per-scale published tables (NEWS2 2017, RCPCH PEWS standards).
+int _band(double value, List<num> bounds, List<int> scores, int elseScore) {
+  for (var i = 0; i < bounds.length; i++) {
+    if (value <= bounds[i].toDouble()) return scores[i];
+  }
+  return elseScore;
+}
+
 /// NEWS2 aggregate scoring bands.
 /// Source: Royal College of Physicians, NEWS2 (2017), Table 1.
 class News2Thresholds {
@@ -163,15 +173,16 @@ class GcsThresholds {
   }
 
   /// Verbal response: 1-5.
+  /// Labels per Tier 1 spec §6: Oriented / Confused / Words / Sounds / None.
   static int verbalResponse(String response) {
     switch (response.toLowerCase()) {
       case 'oriented':
         return 5;
       case 'confused':
         return 4;
-      case 'inappropriate':
+      case 'words':
         return 3;
-      case 'incomprehensible':
+      case 'sounds':
         return 2;
       case 'none':
         return 1;
@@ -181,15 +192,18 @@ class GcsThresholds {
   }
 
   /// Motor response: 1-6.
+  /// Labels per Tier 1 spec §6: Obeys / Localises / Withdraws / Flexion /
+  /// Extension / None.
   static int motorResponse(String response) {
     switch (response.toLowerCase()) {
       case 'obeys':
         return 6;
+      case 'localises':
       case 'localizes':
         return 5;
-      case 'flexion':
+      case 'withdraws':
         return 4;
-      case 'abnormal':
+      case 'flexion':
         return 3;
       case 'extension':
         return 2;
@@ -209,6 +223,20 @@ class GcsThresholds {
     return eye + verbal + motor;
   }
 
+  /// GCS to Tier 1 urgency tier (spec §6 "GCS Tier Mapping").
+  /// Context override: head injury escalates 9-12 to P1, 14 to P2,
+  /// and 15 to a P4 floor.
+  static int tierFromGcs(
+    int gcs, {
+    required bool headInjury,
+  }) {
+    if (gcs <= 8) return 1; // P1
+    if (gcs <= 12) return headInjury ? 1 : 2;
+    if (gcs == 13) return 3;
+    if (gcs == 14) return headInjury ? 2 : 4;
+    return headInjury ? 4 : 5;
+  }
+
   /// GCS to triage level.
   /// Source: RCS Trauma guidelines.
   /// GCS <=8 = Emergency (severe), 9-13 = Urgent (moderate), 14-15 = Routine.
@@ -216,6 +244,196 @@ class GcsThresholds {
     if (gcs <= 8) return TriageLevel.emergency;
     if (gcs <= 13) return TriageLevel.urgent;
     return TriageLevel.routine;
+  }
+}
+
+/// Peds-NEWS2 (1-15 years) age-bracketed scoring.
+/// Source: Tier 1 spec §5.2, aligned with RCPCH PEWS standards and
+/// Geanacopoulos et al., Hosp Pediatr 2024 (10.1542/hpeds.2024-008063).
+class PedsNews2Thresholds {
+  PedsNews2Thresholds._();
+
+  /// Respiratory rate score by age bracket (spec §5.2 RR table).
+  static int respiratoryRateScore(String bracket, double rr) {
+    switch (bracket) {
+      case 'infant': // 1-11 months
+        return _band(rr, [20, 24, 40, 50, 60], [3, 1, 0, 1, 2], 3);
+      case 'toddler': // 1-2 years
+        return _band(rr, [15, 19, 30, 40, 50], [3, 1, 0, 1, 2], 3);
+      case 'preschool': // 3-4 years
+        return _band(rr, [15, 19, 25, 35, 45], [3, 1, 0, 1, 2], 3);
+      case 'school': // 5-7 years
+        return _band(rr, [12, 15, 22, 30, 40], [3, 1, 0, 1, 2], 3);
+      case 'preteen': // 8-11 years
+        return _band(rr, [10, 13, 20, 28, 38], [3, 1, 0, 1, 2], 3);
+      case 'teen': // 12-15 years
+        return _band(rr, [8, 11, 20, 28, 38], [3, 1, 0, 1, 2], 3);
+      default:
+        return 3; // unknown bracket fails closed
+    }
+  }
+
+  /// Heart rate score by age bracket (spec §5.2 HR table).
+  static int heartRateScore(String bracket, double hr) {
+    switch (bracket) {
+      case 'infant':
+        return _band(hr, [80, 90, 100, 160, 170, 180], [3, 2, 1, 0, 1, 2], 3);
+      case 'toddler':
+        return _band(hr, [70, 80, 90, 150, 160, 170], [3, 2, 1, 0, 1, 2], 3);
+      case 'preschool':
+        return _band(hr, [60, 70, 80, 140, 150, 160], [3, 2, 1, 0, 1, 2], 3);
+      case 'school':
+        return _band(hr, [50, 60, 70, 120, 130, 140], [3, 2, 1, 0, 1, 2], 3);
+      case 'preteen':
+        return _band(hr, [45, 55, 65, 110, 120, 130], [3, 2, 1, 0, 1, 2], 3);
+      case 'teen':
+        return _band(hr, [40, 50, 60, 100, 110, 120], [3, 2, 1, 0, 1, 2], 3);
+      default:
+        return 3;
+    }
+  }
+
+  /// Systolic BP score by age bracket (spec §5.2 SBP table).
+  static int systolicBpScore(String bracket, double sbp) {
+    switch (bracket) {
+      case 'infant':
+        return _band(sbp, [55, 60, 70, 95, 105, 115], [3, 2, 1, 0, 1, 2], 3);
+      case 'toddler':
+        return _band(sbp, [60, 65, 75, 100, 110, 120], [3, 2, 1, 0, 1, 2], 3);
+      case 'preschool':
+        return _band(sbp, [65, 70, 80, 105, 115, 125], [3, 2, 1, 0, 1, 2], 3);
+      case 'school':
+        return _band(sbp, [70, 75, 85, 110, 120, 130], [3, 2, 1, 0, 1, 2], 3);
+      case 'preteen':
+        return _band(sbp, [75, 80, 90, 120, 130, 140], [3, 2, 1, 0, 1, 2], 3);
+      case 'teen':
+        return _band(sbp, [80, 85, 95, 130, 140, 150], [3, 2, 1, 0, 1, 2], 3);
+      default:
+        return 3;
+    }
+  }
+
+  /// SpO2 (all pediatric brackets). Source: spec §5.2.
+  /// <=90 = 3, 91-93 = 2, 94-95 = 1, >=96 = 0.
+  static int spO2Score(double spo2) {
+    if (spo2 <= 90) return 3;
+    if (spo2 <= 93) return 2;
+    if (spo2 <= 95) return 1;
+    return 0;
+  }
+
+  /// Temperature (all pediatric brackets). Source: spec §5.2.
+  static int temperatureScore(double temp) {
+    if (temp <= 35.0) return 3;
+    if (temp <= 36.0) return 1;
+    if (temp <= 38.0) return 0;
+    if (temp <= 39.0) return 1;
+    return 2;
+  }
+
+  /// Capillary refill score (spec §5.2).
+  /// <2s = 0, 2-3s = 1, >3s = 3.
+  static int capillaryRefillScore(String refill) {
+    switch (refill) {
+      case 'under2':
+        return 0;
+      case 'twoTo3':
+        return 1;
+      case 'over3':
+        return 3;
+      default:
+        return 3;
+    }
+  }
+
+  /// Upper 95th-percentile normal (spec §5.2 normal-range maximum), used by
+  /// the pedSIRS tachycardia/tachypnoea criteria (§9).
+  static double respiratoryRate95th(String bracket) {
+    switch (bracket) {
+      case 'infant':
+        return 40;
+      case 'toddler':
+        return 30;
+      case 'preschool':
+        return 25;
+      case 'school':
+        return 22;
+      case 'preteen':
+      case 'teen':
+        return 20;
+      default:
+        return 20;
+    }
+  }
+
+  static double heartRate95th(String bracket) {
+    switch (bracket) {
+      case 'infant':
+        return 160;
+      case 'toddler':
+        return 150;
+      case 'preschool':
+        return 140;
+      case 'school':
+        return 120;
+      case 'preteen':
+        return 110;
+      case 'teen':
+        return 100;
+      default:
+        return 100;
+    }
+  }
+}
+
+/// Neonatal adapted PEWS (0-30 days).
+/// Source: Tier 1 spec §5.3. Every parameter scores 0-2; tier map is
+/// >=4 -> P1, 2-3 -> P2, 1 -> P3, 0 -> P4 (minimum by age).
+class NeonatalPewsThresholds {
+  NeonatalPewsThresholds._();
+
+  static int respiratoryRateScore(double rr) {
+    return _band(rr, [25, 29, 60, 70], [2, 1, 0, 1], 2);
+  }
+
+  static int heartRateScore(double hr) {
+    return _band(hr, [100, 119, 160, 180], [2, 1, 0, 1], 2);
+  }
+
+  static int systolicBpScore(double sbp) {
+    return _band(sbp, [45, 59, 90, 100], [2, 1, 0, 1], 2);
+  }
+
+  static int spO2Score(double spo2) {
+    return _band(spo2, [85, 90, 94], [2, 1, 1], 0);
+  }
+
+  static int temperatureScore(double temp) {
+    return _band(temp, [35.5, 36.4, 37.5, 38.5], [2, 1, 0, 1], 2);
+  }
+
+  /// Consciousness / feeding state (spec §5.3 table row).
+  /// 'feedingWell' = 0, 'drowsyPoor' = 1, 'unresponsiveNoFeed' = 2.
+  static int consciousnessScore(String state) {
+    switch (state) {
+      case 'feedingWell':
+        return 0;
+      case 'drowsyPoor':
+        return 1;
+      case 'unresponsiveNoFeed':
+        return 2;
+      default:
+        return 2;
+    }
+  }
+
+  /// Neonatal PEWS tier map from aggregate score.
+  /// Source: spec §5.3 "Neonatal tier mapping".
+  static int tierUrgency(int score) {
+    if (score >= 4) return 1; // P1
+    if (score >= 2) return 2; // P2
+    if (score >= 1) return 3; // P3
+    return 4; // P4 minimum by age
   }
 }
 
