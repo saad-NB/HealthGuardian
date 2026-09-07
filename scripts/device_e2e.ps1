@@ -107,9 +107,9 @@ function Tap-Scroll {
             throw "Tap target not found after $MaxSwipes swipes: '$Sub'"
         }
         if ($Direction -eq 'up') {
-            Invoke-Adb shell input swipe 540 1900 540 500 300
+            Invoke-Adb shell input swipe 540 1750 540 1050 300
         } else {
-            Invoke-Adb shell input swipe 540 500 540 1900 300
+            Invoke-Adb shell input swipe 540 1050 540 1750 300
         }
         Start-Sleep -Milliseconds 700
         $swipes++
@@ -251,6 +251,7 @@ $scenarios = @(
         @{ tap = 'Continue' },
         @{ tap = 'Chest pain' },
         @{ tap = 'Continue' }, # probes, all No
+        @{ tap = 'Continue' }, # modifiers, no risk factors
         @{ assert = 'P5 - Minor' },
         @{ assert = 'NEWS2 score' }
     )},
@@ -276,7 +277,8 @@ $scenarios = @(
         @{ tap = 'Continue' },
         @{ tap = 'Continue' }, # fever probes, all No
         @{ assert = 'Sepsis screening questions' },
-        @{ tap = 'Continue' },
+        @{ tap = 'Continue' }, # sepsis
+        @{ tap = 'Continue' }, # modifiers
         @{ assert = 'NEWS2 score' },
         @{ assert = 'GCS: 15' },
         @{ assert = 'qSOFA 1' },
@@ -300,6 +302,7 @@ $scenarios = @(
         @{ tap = 'Continue' },
         @{ tap = 'Chest pain' },
         @{ tap = 'Continue' }, # chest probes, all No
+        @{ tap = 'Continue' }, # modifiers (MUAC left default), no risk factors
         @{ assert = 'Peds-NEWS2 score' },
         @{ assert = 'Blood pressure not measured (optional for this age group).' },
         @{ assert = 'P5 - Minor' }
@@ -318,7 +321,8 @@ $scenarios = @(
         @{ tap = 'Fever' },
         @{ tap = 'Continue' }, # fever probes, all No
         @{ assert = 'Sepsis screening questions' },
-        @{ tap = 'Continue' },
+        @{ tap = 'Continue' }, # sepsis
+        @{ tap = 'Continue' }, # modifiers (MUAC left default)
         @{ assert = 'PEWS score' },
         @{ assert = 'P4 - ' }
     )},
@@ -347,7 +351,48 @@ $scenarios = @(
         @{ tap = 'Chest pain' },
         @{ rowTap = 'tearing pain'; ctrl = 'Yes' },
         @{ tap = 'Continue' },
+        @{ tap = 'Continue' }, # modifiers, no risk factors
         @{ assert = 'P1 - Emergency' }
+    )},
+    @{ Name = 'adultBurnP4'; Steps = @(
+        @{ tap = 'Start Triage' },
+        @{ tap = '16 - 64 years' },
+        @{ tap = 'Continue' },
+        @{ tap = 'Continue' }, # rr
+        @{ tap = 'Continue' }, # spo2
+        @{ tap = 'Continue' }, # sbp
+        @{ tap = 'Continue' }, # hr
+        @{ tap = 'Continue' }, # temp
+        @{ tap = 'Continue' }, # onOxygen
+        @{ tap = 'Continue' }, # copd
+        @{ tap = 'Alert (A)' },
+        @{ tap = 'Continue' },
+        @{ tap = 'Wound or burn' },
+        @{ assert = 'Wound or burn details' },
+        @{ tap = 'Front: Left upper arm' }, # shade region on the body figure
+        @{ tap = 'Partial-thickness' },
+        @{ tap = 'Continue' }, # burn step done
+        @{ tap = 'Continue' }, # modifiers, no risk factors
+        @{ assert = 'P4 - Standard' }
+    )},
+    @{ Name = 'adultModifierBumpP4'; Steps = @(
+        @{ tap = 'Start Triage' },
+        @{ tap = 'Older adult' },
+        @{ tap = 'Continue' },
+        @{ tap = 'Continue' }, # rr
+        @{ tap = 'Continue' }, # spo2
+        @{ tap = 'Continue' }, # sbp
+        @{ tap = 'Continue' }, # hr
+        @{ tap = 'Continue' }, # temp
+        @{ tap = 'Continue' }, # onOxygen
+        @{ tap = 'Continue' }, # copd
+        @{ tap = 'Alert (A)' },
+        @{ tap = 'Continue' },
+        @{ tap = 'Other problem' },
+        @{ tap = '70' },       # quick-value: explicit age >= 65 (engine bump)
+        @{ tap = 'Continue' }, # modifiers -> result, P5 bumps to P4
+        @{ assert = 'P4 - Standard' },
+        @{ assert = 'Age >65' }
     )}
 )
 
@@ -381,7 +426,13 @@ foreach ($sc in $selected) {
         $idx = 0
         foreach ($step in $sc.Steps) {
             $idx++
-            if ($step.ContainsKey('tap')) { Tap-Scroll $step.tap }
+            if ($step.ContainsKey('tap')) {
+                if ($step.ContainsKey('dir')) {
+                    Tap-Scroll $step.tap -Direction $step.dir
+                } else {
+                    Tap-Scroll $step.tap
+                }
+            }
             elseif ($step.ContainsKey('swipe')) {
                 if ($step.swipe -eq 'down') {
                     Invoke-Adb shell input swipe 540 500 540 1900 300

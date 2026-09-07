@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:healthguardian/triage/engine.dart';
 import 'package:healthguardian/triage/models.dart';
+import 'package:healthguardian/triage/record.dart';
 
 TriageAnswers _petAdult() {
   return TriageAnswers()
@@ -275,6 +276,185 @@ void main() {
       // No sepsis tier for neonates → P3 floor for missing vitals.
       final r = TriageEngine.compute(a);
       expect(r.reasons.where((x) => x.contains('Sepsis')), isEmpty);
+    });
+  });
+
+  group('Burn module (§11/§22)', () {
+    TriageAnswers burnAdult({BurnDepth depth = BurnDepth.partial, double tbsa = 2}) {
+      return _petAdult()
+        ..burn.area = BurnArea.arm
+        ..burn.depth = depth
+        ..burn.tbsaPercent = tbsa;
+    }
+
+    test('airway signs force P1', () {
+      final a = burnAdult()..burn.airwaySigns = true;
+      expect(TriageEngine.compute(a).tier, TriageTier.p1);
+    });
+
+    test('chemical/electrical cause forces P1', () {
+      final a = burnAdult()
+        ..burn.cause = BurnCause.chemical;
+      expect(TriageEngine.compute(a).tier, TriageTier.p1);
+      final b = burnAdult()
+        ..burn.cause = BurnCause.electrical;
+      expect(TriageEngine.compute(b).tier, TriageTier.p1);
+    });
+
+    test('full-thickness on a critical area forces P1', () {
+      final a = burnAdult()
+        ..burn.reset()
+        ..burn.area = BurnArea.face
+        ..burn.depth = BurnDepth.full
+        ..burn.tbsaPercent = 1;
+      expect(TriageEngine.compute(a).tier, TriageTier.p1);
+    });
+
+    test('circumferential full-thickness forces P1', () {
+      final a = burnAdult(depth: BurnDepth.full)..burn.circumferential = true;
+      expect(TriageEngine.compute(a).tier, TriageTier.p1);
+    });
+
+    test('TBSA >= 20 adult maps to P2 (fluid threshold)', () {
+      final a = burnAdult(tbsa: 20);
+      expect(TriageEngine.compute(a).tier, TriageTier.p2);
+    });
+
+    test('TBSA >= 10 child maps to P2 (fluid threshold)', () {
+      final a = _pedNormal()
+        ..burn.area = BurnArea.arm
+        ..burn.depth = BurnDepth.partial
+        ..burn.tbsaPercent = 10;
+      expect(TriageEngine.compute(a).tier, TriageTier.p2);
+    });
+
+    test('deep-partial > 5% maps to P2', () {
+      final a = burnAdult(depth: BurnDepth.deepPartial, tbsa: 6);
+      expect(TriageEngine.compute(a).tier, TriageTier.p2);
+    });
+
+    test('critical area any depth maps to P2', () {
+      final a = burnAdult()
+        ..burn.reset()
+        ..burn.area = BurnArea.hand
+        ..burn.depth = BurnDepth.partial
+        ..burn.tbsaPercent = 1;
+      expect(TriageEngine.compute(a).tier, TriageTier.p2,
+          reason: 'functional risk on the hand');
+    });
+
+    test('contaminated burn maps to P3', () {
+      final a = burnAdult()..burn.contaminated = true;
+      expect(TriageEngine.compute(a).tier, TriageTier.p3);
+    });
+
+    test('moderate partial 11-19% adult maps to P3', () {
+      final a = burnAdult(tbsa: 15);
+      expect(TriageEngine.compute(a).tier, TriageTier.p3);
+    });
+
+    test('small partial burn maps to P4 (outpatient)', () {
+      final a = burnAdult(tbsa: 3);
+      expect(TriageEngine.compute(a).tier, TriageTier.p4);
+    });
+
+    test('superficial <= 1% no risk areas maps to P5', () {
+      final a = burnAdult(depth: BurnDepth.superficial, tbsa: 1);
+      expect(TriageEngine.compute(a).tier, TriageTier.p5);
+    });
+
+    test('unengaged burn adds no tier', () {
+      final a = _petAdult()..burn.reset();
+      final r = TriageEngine.compute(a);
+      expect(r.tier, TriageTier.p5);
+      expect(r.reasons.where((x) => x.contains('Burn:')), isEmpty);
+    });
+  });
+
+  group('Modifiers I1-I7 (§12)', () {
+    test('age <5 or >65 bumps one tier', () {
+      final a = _petAdult()..modifiers.ageYears = 70;
+      final r = TriageEngine.compute(a);
+      // adult normal P5 → P4 after single bump.
+      expect(r.tier, TriageTier.p4);
+      expect(r.reasons, contains(contains('Modifier bump')));
+
+      final child = _petAdult()..modifiers.ageYears = 4;
+      expect(TriageEngine.compute(child).tier, TriageTier.p4);
+    });
+
+    test('immunocompromised bumps one tier', () {
+      final a = _petAdult()..modifiers.immunocompromised = true;
+      expect(TriageEngine.compute(a).tier, TriageTier.p4);
+    });
+
+    test('pregnancy bumps one tier', () {
+      final a = _petAdult()..modifiers.pregnant = true;
+      expect(TriageEngine.compute(a).tier, TriageTier.p4);
+    });
+
+    test('MUAC < 11.5 cm bumps one tier', () {
+      final a = _pedNormal()..modifiers.muacCm = 10.5;
+      expect(TriageEngine.compute(a).tier, TriageTier.p4);
+    });
+
+    test('CFS >= 5 bumps one tier', () {
+      final a = _petAdult()..modifiers.cfsLevel = 6;
+      expect(TriageEngine.compute(a).tier, TriageTier.p4);
+    });
+
+    test('multiple modifiers still bump only once (single-bump cap)', () {
+      final a = _petAdult()
+        ..modifiers.ageYears = 70
+        ..modifiers.immunocompromised = true
+        ..modifiers.cfsLevel = 6;
+      // P5 → P4 only, never P3.
+      expect(TriageEngine.compute(a).tier, TriageTier.p4);
+    });
+
+    test('bump cannot exceed P1 and P1 stays P1', () {
+      final a = _petAdult()
+        ..modifiers.ageYears = 70
+        ..respiratoryRate = 60; // single param 3 → P1 already
+      expect(TriageEngine.compute(a).tier, TriageTier.p1);
+    });
+
+    test('age bracket alone does not bump (ADR-013 healthy toddler P5)', () {
+      final r = TriageEngine.compute(_pedNormal());
+      expect(r.tier, TriageTier.p5);
+      expect(r.reasons.where((x) => x.contains('Modifier bump')), isEmpty);
+    });
+  });
+
+  group('Stored record (§15)', () {
+    test('computeRecord returns a round-trippable JSON record', () {
+      final a = _pedNormal();
+      final rec = TriageEngine.computeRecord(a);
+      expect(rec.triageId, startsWith('tg-'));
+      expect(rec.version, '2.0');
+      expect(rec.finalTier, TriageTier.p5);
+      expect(rec.contributingScores['vital'], isA<Map<String, dynamic>>());
+      // ADR-013: SBP optional for children, so no missing-param flags.
+      expect(rec.missingParams, isEmpty);
+
+      final json = rec.toJson();
+      final restored = TriageRecord.fromJson(json);
+      expect(restored.triageId, rec.triageId);
+      expect(restored.finalTier, rec.finalTier);
+      expect(restored.contributingScores, rec.contributingScores);
+      expect(restored.missingParams, rec.missingParams);
+    });
+
+    test('record captures modifier bump and burn', () {
+      final a = _petAdult()..modifiers.ageYears = 70;
+      a.burn
+        ..area = BurnArea.arm
+        ..depth = BurnDepth.partial
+        ..tbsaPercent = 15;
+      final rec = TriageEngine.computeRecord(a);
+      // Burn 11-19% partial adult → P3, then I1 age bump → P2.
+      expect(rec.finalTier, TriageTier.p2);
+      expect(rec.modifiers['bumpApplied'], isTrue);
     });
   });
 }

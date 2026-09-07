@@ -1,6 +1,7 @@
 import '../config/clinical_thresholds.dart';
 import 'models.dart';
 import 'probes.dart';
+import 'record.dart';
 
 /// Tier 1 triage decision engine.
 ///
@@ -53,13 +54,25 @@ class TriageEngine {
 
   /// Compute the triage result for a session.
   /// Never throws: any incomplete/invalid input fails closed to a higher tier.
-  static TriageResult compute(TriageAnswers a) {
+  static TriageResult compute(TriageAnswers a) => _evaluate(a).result;
+
+  /// Full structured record (spec §15/§21.9) for persistence and sharing.
+  static TriageRecord computeRecord(TriageAnswers a) => _evaluate(a).record;
+
+  static ({TriageResult result, TriageRecord record}) _evaluate(
+      TriageAnswers a) {
     final age = a.ageGroup;
     if (age == null) {
-      return TriageResult(
+      const reasons = ['Age was not selected.'];
+      final result = TriageResult(
         tier: _missingVitalsFloor,
-        reasons: const ['Age was not selected.'],
+        reasons: reasons,
         vitalReviewRequired: true,
+      );
+      return (
+        result: result,
+        record: _dangerRecord(a, result,
+            safety: const ['ageMissing', 'vitalReviewRequired']),
       );
     }
 
@@ -67,11 +80,16 @@ class TriageEngine {
     var tier = _applyDangerGates(a, reasons);
 
     if (tier == TriageTier.p1) {
-      return TriageResult(
+      final result = TriageResult(
         tier: TriageTier.p1,
         reasons: reasons,
         scale: age.scale,
         vitalReviewRequired: false,
+      );
+      return (
+        result: result,
+        record: _dangerRecord(a, result,
+            gates: {'passed': false, 'triggered': a.dangerSigns.toList()}),
       );
     }
 
@@ -82,8 +100,9 @@ class TriageEngine {
 
     // === CONSCIOUSNESS / GCS (§6) — only when all components collected ===
     final gcsTotal = _gcsTotal(a);
+    var gcsTier = tier;
     if (gcsTotal != null) {
-      final gcsTier = _tierFromUrgency(GcsThresholds.tierFromGcs(
+      gcsTier = _tierFromUrgency(GcsThresholds.tierFromGcs(
         gcsTotal,
         headInjury: a.chiefComplaint?.suggestsHeadInjury ?? false,
       ));
@@ -107,13 +126,210 @@ class TriageEngine {
       reasons.add(sepsisReason);
     }
 
-    return TriageResult(
+    // === BURN MODULE (§11/§22) ===
+    final burn = _burnTier(a);
+    final burnReason = burn.reason;
+    if (burn.tier != null && burnReason != null) {
+      tier = tier.atMostUrgent(burn.tier!);
+      reasons.add(burnReason);
+    }
+
+    // === MODIFIER BUMP AFTER MERGE (§12/§13 step 10) ===
+    final vulnerableAge = _vulnerableAge(a);
+    final activeModifiers = _activeModifiers(a, vulnerableAge);
+    var bumpApplied = false;
+    if (activeModifiers.isNotEmpty && tier != TriageTier.p1) {
+      final preBump = tier;
+      tier = tier.bumpOnce();
+      bumpApplied = true;
+      reasons.add(
+          'Modifier bump: ${preBump.label} → ${tier.label} '
+          '(${activeModifiers.join(', ')})');
+    }
+
+    final result = TriageResult(
       tier: tier,
       reasons: reasons,
       aggregate: vital.score,
       scale: age.scale,
       vitalReviewRequired: vital.review,
     );
+
+    final record = _fullRecord(
+      a,
+      result,
+      vital: vital,
+      gcsTotal: gcsTotal,
+      complaintScore: complaint.score,
+      complaintTier: complaint.tier,
+      sepsis: sepsis,
+      burn: burn,
+      vulnerableAge: vulnerableAge,
+      activeModifiers: activeModifiers,
+      bumpApplied: bumpApplied,
+    );
+
+    return (result: result, record: record);
+  }
+
+  static TriageRecord _dangerRecord(
+    TriageAnswers a,
+    TriageResult result, {
+    Map<String, dynamic>? gates,
+    List<String>? safety,
+  }) {
+    return TriageRecord.fromAnswers(
+      answers: a,
+      finalTier: result.tier,
+      contributingScores: const {'gate': {'tier': 'P1', 'triggered': []}},
+      mergeReasons: result.reasons,
+      missingParams: const [],
+      substitutionApplied: false,
+      safetyFlags: safety ?? ['vitalReviewRequired'],
+      modifiers: _modifiersBlock(a, false, true, const []),
+      gates: gates ?? {'passed': true, 'triggered': []},
+      inputs: _inputsSnapshot(a),
+    );
+  }
+
+  static TriageRecord _fullRecord(
+    TriageAnswers a,
+    TriageResult result, {
+    required _VitalOutcome vital,
+    required int? gcsTotal,
+    required int complaintScore,
+    required TriageTier? complaintTier,
+    required ({TriageTier? tier, String? reason}) sepsis,
+    required ({TriageTier? tier, String? reason}) burn,
+    required bool vulnerableAge,
+    required List<String> activeModifiers,
+    required bool bumpApplied,
+  }) {
+    final safety = <String>[
+      if (vital.review) 'vitalReviewRequired',
+    ];
+    final contributing = <String, dynamic>{
+      'vital': {
+        if (result.scale != null) 'scale': result.scale!.name,
+        'score': vital.score,
+        'tier': vital.tier.label,
+        'components': vital.components,
+        'missingParams': vital.missing,
+        'substitutionApplied': vital.substituted,
+      },
+      if (gcsTotal != null)
+        'gcs': {'score': gcsTotal, 'tier': result.reasons.firstWhere(
+          (r) => r.startsWith('GCS:'), orElse: () => 'GCS: $gcsTotal').split('→ ').last.trim()
+        },
+      if (a.chiefComplaint != null)
+        'complaint': {
+          'branch': a.chiefComplaint!.id,
+          'score': complaintScore,
+          'tier': complaintTier?.label,
+        },
+      if (sepsisReasonOf(result) != null)
+        'sepsis': {'score': sepsisScoreOf(sepsis), 'tier': sepsis.tier?.label},
+      if (burn.tier != null)
+        'burn': {
+          'cause': a.burn.cause?.name,
+          'tbsa': a.burn.tbsaPercent,
+          'depth': a.burn.depth?.label,
+          'tier': burn.tier!.label,
+          'reason': burn.reason,
+        },
+      'skin': null,
+    };
+
+    return TriageRecord.fromAnswers(
+      answers: a,
+      finalTier: result.tier,
+      contributingScores: contributing,
+      mergeReasons: result.reasons,
+      missingParams: vital.missing,
+      substitutionApplied: vital.substituted.isNotEmpty,
+      safetyFlags: safety,
+      modifiers:
+          _modifiersBlock(a, vulnerableAge, bumpApplied, activeModifiers),
+      gates: {'passed': a.dangerSigns.isEmpty, 'triggered': a.dangerSigns.toList()},
+      inputs: _inputsSnapshot(a),
+    );
+  }
+
+  static String? sepsisReasonOf(TriageResult result) {
+    for (final r in result.reasons) {
+      if (r.startsWith('Sepsis screen:')) return r;
+    }
+    return null;
+  }
+
+  static int sepsisScoreOf(
+      ({TriageTier? tier, String? reason}) sepsis) {
+    final reason = sepsis.reason ?? '';
+    final m = RegExp(r'(qSOFA|pedSIRS) (\d)').firstMatch(reason);
+    return m == null ? 0 : int.parse(m.group(2)!);
+  }
+
+  static Map<String, dynamic> _modifiersBlock(
+    TriageAnswers a,
+    bool vulnerableAge,
+    bool bumpApplied,
+    List<String> activeModifiers,
+  ) {
+    return {
+      'ageVulnerable': vulnerableAge,
+      'active': activeModifiers,
+      'bumpApplied': bumpApplied,
+      'ageYears': a.modifiers.ageYears,
+      'pregnant': a.modifiers.pregnant,
+      'immunocompromised': a.modifiers.immunocompromised,
+      'muacCm': a.modifiers.muacCm,
+      'cfsLevel': a.modifiers.cfsLevel,
+    };
+  }
+
+  static Map<String, dynamic> _inputsSnapshot(TriageAnswers a) {
+    return {
+      'age': a.ageGroup?.name,
+      'vitals': {
+        'rr': a.respiratoryRate,
+        'spo2': a.spo2,
+        'spo2Missing': a.spo2Missing,
+        'sbp': a.systolicBp,
+        'hr': a.heartRate,
+        'temp': a.temperature,
+        'tempMissing': a.tempMissing,
+        'consciousness': a.consciousness?.letter,
+        'capillaryRefill': a.capillaryRefill?.name,
+        'neonatalConsciousness': a.neonatalConsciousness?.stateKey,
+        'onOxygen': a.onOxygen,
+        'copdCo2Retention': a.copdCo2Retention,
+      },
+      'gcs': [a.gcsEye, a.gcsVerbal, a.gcsMotor],
+      'complaint': a.chiefComplaint?.id,
+      'probes': Map<String, bool>.from(a.probeAnswers),
+      'burn': {
+        'cause': a.burn.cause?.name,
+        'timeframe': a.burn.timeSinceInjury?.name,
+        'areas': a.burn.areas.map((x) => x.name).toList(),
+        'shaded': a.burn.shaded
+            .map((e) => '${e.$1.name}:${e.$2.name}')
+            .toList(),
+        'tbsa': a.burn.tbsaPercent,
+        'depth': a.burn.depth?.name,
+        'airwaySigns': a.burn.airwaySigns,
+        'circumferential': a.burn.circumferential,
+        'chemicalElectricalCriticalSite': a.burn.chemicalElectricalCriticalSite,
+        'contaminated': a.burn.contaminated,
+      },
+      'modifiers': {
+        'ageYears': a.modifiers.ageYears,
+        'sex': a.modifiers.sex,
+        'pregnant': a.modifiers.pregnant,
+        'immunocompromised': a.modifiers.immunocompromised,
+        'muacCm': a.modifiers.muacCm,
+        'cfsLevel': a.modifiers.cfsLevel,
+      },
+    };
   }
 
   static TriageTier _applyDangerGates(TriageAnswers a, List<String> reasons) {
@@ -298,6 +514,9 @@ class TriageEngine {
     ];
     final hasMissingVitals = missing.isNotEmpty || spo2Missing || tempMissing;
 
+    if (spo2Missing) missing.add('spo2');
+    if (tempMissing) missing.add('temperature');
+
     final aggregate = (rrScore ?? 0) +
         (spo2Score ?? 0) +
         (sbpScore ?? 0) +
@@ -319,7 +538,26 @@ class TriageEngine {
       tier = tier.atMostUrgent(_missingVitalsFloor);
     }
 
-    return _VitalOutcome(score: aggregate, tier: tier, review: review);
+    final substituted = <String, int>{};
+    if (spo2Missing && spo2Score != null) substituted['spo2'] = spo2Score;
+    if (tempMissing && tempScore != null) substituted['temperature'] = tempScore;
+
+    return _VitalOutcome(
+      score: aggregate,
+      tier: tier,
+      review: review,
+      components: {
+        'rr': ?rrScore,
+        'spo2': ?spo2Score,
+        'sbp': ?sbpScore,
+        'hr': ?hrScore,
+        'temp': ?tempScore,
+        'avpu': ?conscScore,
+        'o2': o2Score,
+      },
+      missing: missing,
+      substituted: substituted,
+    );
   }
 
   static TriageTier _tierFromNews2(int aggregate, bool anyParamThree) {
@@ -415,6 +653,9 @@ class TriageEngine {
     ];
     final hasMissingVitals = missing.isNotEmpty || spo2Missing || tempMissing;
 
+    if (spo2Missing) missing.add('spo2');
+    if (tempMissing) missing.add('temperature');
+
     final aggregate = (rrScore ?? 0) +
         (spo2Score ?? 0) +
         (sbpScore ?? 0) +
@@ -437,7 +678,26 @@ class TriageEngine {
       tier = tier.atMostUrgent(_missingVitalsFloor);
     }
 
-    return _VitalOutcome(score: aggregate, tier: tier, review: review);
+    final substituted = <String, int>{};
+    if (spo2Missing && spo2Score != null) substituted['spo2'] = spo2Score;
+    if (tempMissing && tempScore != null) substituted['temperature'] = tempScore;
+
+    return _VitalOutcome(
+      score: aggregate,
+      tier: tier,
+      review: review,
+      components: {
+        'rr': ?rrScore,
+        'spo2': ?spo2Score,
+        'sbp': ?sbpScore,
+        'hr': ?hrScore,
+        'temp': ?tempScore,
+        'avpu': ?conscScore,
+        'capRefill': ?refillScore,
+      },
+      missing: missing,
+      substituted: substituted,
+    );
   }
 
   // ---- Neonatal PEWS (spec §5.3) ---------------------------------------
@@ -496,6 +756,9 @@ class TriageEngine {
     ];
     final hasMissingVitals = missing.isNotEmpty || spo2Missing || tempMissing;
 
+    if (spo2Missing) missing.add('spo2');
+    if (tempMissing) missing.add('temperature');
+
     final aggregate = (rrScore ?? 0) +
         (hrScore ?? 0) +
         (sbpScore ?? 0) +
@@ -510,7 +773,25 @@ class TriageEngine {
       tier = tier.atMostUrgent(_missingVitalsFloor);
     }
 
-    return _VitalOutcome(score: aggregate, tier: tier, review: review);
+    final substituted = <String, int>{};
+    if (spo2Missing && spo2Score != null) substituted['spo2'] = spo2Score;
+    if (tempMissing && tempScore != null) substituted['temperature'] = tempScore;
+
+    return _VitalOutcome(
+      score: aggregate,
+      tier: tier,
+      review: review,
+      components: {
+        'rr': ?rrScore,
+        'hr': ?hrScore,
+        'sbp': ?sbpScore,
+        'spo2': ?spo2Score,
+        'temp': ?tempScore,
+        'consciousness': ?conscScore,
+      },
+      missing: missing,
+      substituted: substituted,
+    );
   }
 
   static void _noteThree(
@@ -657,14 +938,249 @@ class TriageEngine {
     // Neonates: sepsis handled by danger gates / clinical judgement.
     return (tier: null, reason: null);
   }
+
+  // ---------------------------------------------------------------------
+  // Burn module (§11 H1-H8 + operative §22 decision table)
+  // ---------------------------------------------------------------------
+
+  /// Non-null when the burn module is engaged and produced a tier.
+  /// Rule order matches the priority order of §22.9 (first match wins).
+  static ({TriageTier? tier, String? reason}) _burnTier(TriageAnswers a) {
+    final b = a.burn;
+    final age = a.ageGroup;
+    if (age == null) return (tier: null, reason: null);
+    // Engaged via shading may carry TBSA with no critical BurnArea yet
+    // (e.g. a plain arm segment), so engage when either is present.
+    if (!b.engaged || (b.areas.isEmpty && b.tbsaPercent <= 0)) {
+      return (tier: null, reason: null);
+    }
+
+    final isChild = age.scale != VitalScale.news2;
+    final fullThickness = b.depth == BurnDepth.full;
+    // §22.12 fail-closed: depth unsure → deep-partial.
+    final deepPartial = b.depth == BurnDepth.deepPartial || b.depth == BurnDepth.unsure;
+    final superficial = b.depth == BurnDepth.superficial;
+    final partial = b.depth == BurnDepth.partial;
+    final tbsa = b.tbsaPercent;
+
+    // Rule 1: any airway sign → P1.
+    if (b.airwaySigns) {
+      return (
+        tier: TriageTier.p1,
+        reason: 'Burn: airway sign → immediate care',
+      );
+    }
+
+    // Rule 2: chemical or electrical cause → P1 (hidden internal injury).
+    if (b.cause?.isChemicalOrElectrical ?? false) {
+      return (
+        tier: TriageTier.p1,
+        reason: 'Burn: chemical/electrical cause → immediate care',
+      );
+    }
+
+    // Rule 3: full-thickness on a critical area → P1.
+    if (fullThickness && b.hasCriticalArea) {
+      return (
+        tier: TriageTier.p1,
+        reason: 'Burn: full-thickness on face/hands/feet/genitals/joint → '
+            'immediate care',
+      );
+    }
+
+    // Rule 4: circumferential full-thickness → P1.
+    if (fullThickness && b.circumferential) {
+      return (
+        tier: TriageTier.p1,
+        reason: 'Burn: circumferential full-thickness → immediate care',
+      );
+    }
+
+    // Rule 18: circumferential full-thickness + abnormal distal pulse/refill.
+    if (fullThickness && b.circumferential &&
+        (a.capillaryRefill == CapillaryRefill.over3)) {
+      return (
+        tier: TriageTier.p1,
+        reason: 'Burn: circumferential with poor distal circulation → '
+            'immediate care',
+      );
+    }
+
+    // Rule 19: face/genital burn with inhalational spread → P1.
+    if ((b.areas.contains(BurnArea.face) ||
+            b.areas.contains(BurnArea.genitals)) &&
+        b.airwaySigns) {
+      return (
+        tier: TriageTier.p1,
+        reason: 'Burn: face/genital with inhalation risk → immediate care',
+      );
+    }
+
+    // Rule 5: TBSA ≥ 20% (adult) / ≥ 10% (child) → P2 (fluid threshold).
+    final tbsaThreshold = isChild ? 10.0 : 20.0;
+    if (tbsa >= tbsaThreshold) {
+      return (
+        tier: TriageTier.p2,
+        reason: 'Burn: TBSA ≥ ${tbsaThreshold.toStringAsFixed(0)}% → '
+            'fluid resuscitation threshold',
+      );
+    }
+
+    // Rule 6: full-thickness > 1% any location → P2 (burn center).
+    if (fullThickness && tbsa > 1) {
+      return (
+        tier: TriageTier.p2,
+        reason: 'Burn: full-thickness > 1% → burn center',
+      );
+    }
+
+    // Rule 7: critical area (face/hands/feet/genitals/joints) any depth → P2.
+    if (b.hasCriticalArea) {
+      return (
+        tier: TriageTier.p2,
+        reason: 'Burn: face/hands/feet/genitals/joint → functional risk',
+      );
+    }
+
+    // Rule 8: deep-partial covering > 5% TBSA → P2 (excision threshold).
+    if (deepPartial && tbsa > 5) {
+      return (
+        tier: TriageTier.p2,
+        reason: 'Burn: deep partial > 5% → excision threshold',
+      );
+    }
+
+    // Rule 9: circumferential non-full-thickness → P2 (compartment risk).
+    if (b.circumferential) {
+      return (
+        tier: TriageTier.p2,
+        reason: 'Burn: circumferential → compartment risk',
+      );
+    }
+
+    // Rule 10: chemical/electrical to eyes/mouth/perineum → P2.
+    if (b.chemicalElectricalCriticalSite) {
+      return (
+        tier: TriageTier.p2,
+        reason: 'Burn: chemical/electrical to eye/mouth/perineum → '
+            'critical structure',
+      );
+    }
+
+    // Rule 15: contaminated burn → P3 (infection risk).
+    if (b.contaminated) {
+      return (
+        tier: TriageTier.p3,
+        reason: 'Burn: contaminated wound → infection risk',
+      );
+    }
+
+    // Rule 16: immunocompromised + burn → P3.
+    if (a.modifiers.immunocompromised == true) {
+      return (
+        tier: TriageTier.p3,
+        reason: 'Burn: burn in an immunocompromised patient → infection risk',
+      );
+    }
+
+    // Rule 11: partial scald/flame, TBSA 6-9% (child) / 11-19% (adult) → P3.
+    final partialLow = isChild ? 6.0 : 11.0;
+    final partialHigh = isChild ? 9.0 : 19.0;
+    if (partial && tbsa >= partialLow && tbsa <= partialHigh) {
+      return (
+        tier: TriageTier.p3,
+        reason: 'Burn: partial thickness $tbsa% → moderate burn',
+      );
+    }
+
+    // Rule 12: partial-thickness, TBSA < 6% (child) / < 11% (adult),
+    // single region, no risk areas → P4 (outpatient possible).
+    if (partial && tbsa < partialLow && !b.hasCriticalArea) {
+      return (
+        tier: TriageTier.p4,
+        reason: 'Burn: partial thickness $tbsa% no risk areas → outpatient',
+      );
+    }
+
+    // Rule 13: deep-partial or full-thickness tiny (≤1%), no risk areas → P4.
+    if ((deepPartial || fullThickness) && tbsa <= 1 && !b.hasCriticalArea) {
+      return (
+        tier: TriageTier.p4,
+        reason: 'Burn: tiny deep burn (≤1%) → outpatient possible',
+      );
+    }
+
+    // Rule 14: superficial only, TBSA ≤ 1%, no risk areas → P5 (self-care).
+    if (superficial && tbsa <= 1 && !b.hasCriticalArea) {
+      return (
+        tier: TriageTier.p5,
+        reason: 'Burn: superficial ≤1% → self-care',
+      );
+    }
+
+    // Fail-closed default: an engaged but non-superficial burn we could not
+    // safely classify stays at P3.
+    return (
+      tier: TriageTier.p3,
+      reason: 'Burn: depth/area requires clinical review',
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // Modifiers (§12 I1-I7) and bump-after-merge (§13 step 10)
+  // ---------------------------------------------------------------------
+
+  /// True when the I1 age modifier triggers: the walkthrough uses age
+  /// brackets (which already encode age-appropriate scales, ADR-013), so the
+  /// bump only fires when the modifiers step records an explicit age that is
+  /// outside the healthy-adult range (<5 or >65, spec �12 I1).
+  static bool _vulnerableAge(TriageAnswers a) {
+    final m = a.modifiers;
+    if (m.ageYears == null) return false;
+    return m.ageYears! < 5 || m.ageYears! > 65;
+  }
+
+  static List<String> _activeModifiers(TriageAnswers a, bool vulnerableAge) {
+    final m = a.modifiers;
+    final active = <String>[];
+    if (vulnerableAge) {
+      final years = m.ageYears;
+      active.add(years != null && years < 5 ? 'Age <5' : 'Age >65');
+    }
+    if (m.pregnant == true) active.add('Pregnant');
+    if (m.immunocompromised == true) active.add('Immunocompromised');
+    if (m.muacCm != null && m.muacCm! < 11.5) {
+      active.add('MUAC <11.5 cm');
+    }
+    if (m.cfsLevel != null && m.cfsLevel! >= 5) {
+      active.add('CFS ${m.cfsLevel}');
+    }
+    return active;
+  }
 }
 
 class _VitalOutcome {
-  const _VitalOutcome({required this.score, required this.tier, required this.review});
+  const _VitalOutcome({
+    required this.score,
+    required this.tier,
+    required this.review,
+    this.components = const {},
+    this.missing = const [],
+    this.substituted = const {},
+  });
 
   final int score;
   final TriageTier tier;
 
   /// True when any vital is missing/invalid (spec §21 rule 5).
   final bool review;
+
+  /// Per-parameter scores for the stored record (component -> score).
+  final Map<String, int> components;
+
+  /// Parameters that were missing/invalid this walkthrough.
+  final List<String> missing;
+
+  /// Substitutions applied for missing parameters (param -> substituted score).
+  final Map<String, int> substituted;
 }

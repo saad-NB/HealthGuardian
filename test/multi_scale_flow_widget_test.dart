@@ -91,6 +91,8 @@ void main() {
       // At complaint; GCS not indicated because AVPU stayed Alert.
       await _tap(tester, find.text('Other problem'));
       expect(find.text('Eye opening'), findsNothing);
+      // Advance past the modifiers step to reach the result.
+      await _tapContinue(tester);
       expect(find.textContaining('NEWS2 score'), findsOneWidget);
     });
 
@@ -123,6 +125,45 @@ void main() {
 
       // GCS done; Headache also has a probe branch so probes appear.
       expect(find.textContaining('suddenly, like a thunderclap'), findsOneWidget);
+    });
+  });
+
+  group('Burn + modifiers flow', () {
+    testWidgets('wound complaint opens the burn step and burns reach P4',
+        (tester) async {
+      await _selectAge(tester, 'Adult');
+      await _tapContinue(tester);
+      for (var i = 0; i < 8; i++) {
+        await _tapContinue(tester);
+      }
+      await _tap(tester, find.text('Wound or burn'));
+      expect(find.text('Wound or burn details'), findsOneWidget);
+
+      // Small partial burn on the arm: shade it on the body figure.
+      await _tap(tester, find.bySemanticsLabel('Front: Left upper arm'));
+      expect(find.text('Burned: 1.8%'), findsOneWidget);
+      await _tap(tester, find.text('Partial-thickness'));
+      await _tapContinue(tester); // → modifiers
+      await _tapContinue(tester); // → result
+
+      expect(find.textContaining('Burn: partial thickness'), findsOneWidget);
+      expect(find.textContaining('P4'), findsOneWidget);
+    });
+
+    testWidgets('modifier adult age 70 shows on the modifiers step',
+        (tester) async {
+      await _selectAge(tester, 'Adult');
+      await _tapContinue(tester);
+      for (var i = 0; i < 8; i++) {
+        await _tapContinue(tester);
+      }
+      await _tap(tester, find.text('Other problem'));
+
+      // Modifiers step: age stepper visible for NEWS2 adults.
+      expect(find.text('Age (if known, in years)'), findsOneWidget);
+      await _tapContinue(tester);
+
+      expect(find.text('P5 - Minor'), findsOneWidget);
     });
   });
 }

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'burn_profile.dart';
+
 /// Vital-sign scoring scale, driven by the age bracket (spec §3).
 enum VitalScale {
   news2(label: 'NEWS2'),
@@ -50,6 +52,13 @@ enum AgeGroup {
   /// True when the patient is younger than 1 year (feeds the §21.6
   /// temperature-concern list) .
   bool get isUnderOneYear => this == neonate || this == infant;
+
+  /// True when below 5 years (drives the I1 modifier bump, spec §12).
+  bool get isUnderFive =>
+      this == neonate ||
+      this == infant ||
+      this == toddler ||
+      this == preschool;
 
   /// True for 65+ (feeds the §21.6 temperature-concern list).
   bool get isOlderAdult => this == olderAdult;
@@ -210,6 +219,190 @@ class SepsisAnswers {
   }
 }
 
+/// Burn cause (spec §11 H1).
+enum BurnCause {
+  flame(label: 'Flame', detail: 'Caught fire from a flame'),
+  scald(label: 'Scald', detail: 'Hot liquid or steam'),
+  chemical(label: 'Chemical', detail: 'Acid, alkali, or other chemical'),
+  electrical(label: 'Electrical', detail: 'Electric current injury'),
+  contact(label: 'Contact', detail: 'Hot surface'),
+  other(label: 'Other', detail: 'Another cause');
+
+  const BurnCause({required this.label, required this.detail});
+
+  final String label;
+  final String detail;
+
+  /// Chemical/electrical causes carry hidden internal injury risk (§11 H1).
+  bool get isChemicalOrElectrical =>
+      this == chemical || this == electrical;
+}
+
+/// Burn depth classification (spec §11 H7 / §22 depth rules).
+enum BurnDepth {
+  superficial(label: 'Superficial', detail: 'Red, dry, no blister'),
+  partial(label: 'Partial-thickness', detail: 'Blistered, weeping'),
+  deepPartial(label: 'Deep partial', detail: 'Waxy, white, less painful'),
+  full(label: 'Full-thickness', detail: 'Leathery, charred, painless'),
+  unsure(label: 'Unsure', detail: 'Cannot tell the depth');
+
+  const BurnDepth({required this.label, required this.detail});
+
+  final String label;
+  final String detail;
+
+  bool get isFullThickness => this == full || this == unsure;
+  bool get isDeepOrDeeper => this == deepPartial || this == full || this == unsure;
+}
+
+/// Burn body area (spec §11 H3 multi-tap). Critical areas drive P1/P2 rules.
+enum BurnArea {
+  face(label: 'Face', critical: true),
+  neck(label: 'Neck', critical: false),
+  chest(label: 'Chest or back', critical: false),
+  abdomen(label: 'Abdomen', critical: false),
+  arm(label: 'Arm', critical: false),
+  hand(label: 'Hand', critical: true),
+  leg(label: 'Leg', critical: false),
+  foot(label: 'Foot', critical: true),
+  genitals(label: 'Genitals', critical: true),
+  joint(label: 'Major joint', critical: true);
+
+  const BurnArea({required this.label, required this.critical});
+
+  final String label;
+  final bool critical;
+}
+
+/// Time since the burn occurred (spec §11 H2).
+enum BurnTimeframe {
+  under1h(label: 'Less than 1 hour ago'),
+  oneTo6h(label: '1 - 6 hours ago'),
+  sixTo24h(label: '6 - 24 hours ago'),
+  over24h(label: 'More than 24 hours ago');
+
+  const BurnTimeframe({required this.label});
+
+  final String label;
+}
+
+/// Burn module inputs (spec §11 H1-H8). The tier rules read these via
+/// the operative §22 decision table (supersedes the palm-method rules).
+class BurnAnswers {
+  BurnCause? cause;
+  BurnTimeframe? timeSinceInjury;
+  final Set<BurnArea> areas = {};
+  double tbsaPercent = 0;
+  BurnDepth? depth;
+
+  /// H6 — any airway sign (hoarseness, soot, singed hairs).
+  bool airwaySigns = false;
+
+  /// H7 — circumferential burn (auto/reported).
+  bool circumferential = false;
+
+  /// H8 — chemical/electrical to eyes, mouth, or perineum.
+  bool chemicalElectricalCriticalSite = false;
+
+  /// Rule 15 — contaminated burn (soil, sewage, bite, metal shavings).
+  bool contaminated = false;
+
+  /// Regions shaded on the tap-to-fill body figure (spec §11 H3/H4).
+  final Set<(BodySide, BurnRegion)> shaded = {};
+
+  bool get engaged =>
+      cause != null ||
+      areas.isNotEmpty ||
+      tbsaPercent > 0 ||
+      airwaySigns ||
+      circumferential ||
+      depth != null;
+
+  bool get hasCriticalArea => areas.any((a) => a.critical);
+
+  set area(BurnArea a) => areas.add(a);
+
+  /// Derives [areas] and [tbsaPercent] from the shaded body-map regions using
+  /// the given age [profile]. Called whenever the figure changes (or the
+  /// profile switches e.g. after picking an age bracket).
+  void syncFromShaded(BurnProfile profile) {
+    areas.clear();
+    var tbsa = 0.0;
+    for (final (side, region) in shaded) {
+      if (!region.supports(side)) continue;
+      tbsa += profile.weight(side, region);
+      final burnArea = region.area;
+      if (burnArea != null) areas.add(burnArea);
+    }
+    tbsaPercent = double.parse(tbsa.toStringAsFixed(1));
+  }
+
+  /// Toggles one (side, region) pair and re-syncs the derived fields.
+  void toggleRegion(BodySide side, BurnRegion region, BurnProfile profile) {
+    final key = (side, region);
+    if (!shaded.remove(key)) shaded.add(key);
+    syncFromShaded(profile);
+  }
+
+  void clearShaded(BurnProfile profile) {
+    shaded.clear();
+    syncFromShaded(profile);
+  }
+
+  void reset() {
+    cause = null;
+    timeSinceInjury = null;
+    areas.clear();
+    tbsaPercent = 0;
+    depth = null;
+    airwaySigns = false;
+    circumferential = false;
+    chemicalElectricalCriticalSite = false;
+    contaminated = false;
+    shaded.clear();
+  }
+}
+
+/// Section I modifiers (spec §12 I1-I7). The engine reads these for the
+/// bump-after-merge rule (§13 step 10); COPD is captured in vitals.
+class ModifierAnswers {
+  /// I1 — age in full years (falls back to [AgeGroup] when null).
+  int? ageYears;
+
+  /// I2 — biological sex.
+  String? sex; // 'male' | 'female' | null
+
+  /// I3 — pregnancy (only meaningful together with sex == 'female').
+  bool? pregnant;
+
+  /// I4 — immunocompromised.
+  bool? immunocompromised;
+
+  /// I5 — MUAC in cm (<11.5 severe malnutrition, <5y only).
+  double? muacCm;
+
+  /// I6 — Clinical Frailty Scale 1-7 (>=65y only).
+  int? cfsLevel;
+
+  /// Whether any modifier forces a single bump after max() merge (§13 step 10).
+  /// Age vulnerability is resolved by the engine from [AgeGroup] + [ageYears].
+  bool requiresBump(bool vulnerableAge) =>
+      vulnerableAge ||
+      pregnant == true ||
+      immunocompromised == true ||
+      (muacCm != null && muacCm! < 11.5) ||
+      (cfsLevel != null && cfsLevel! >= 5);
+
+  void reset() {
+    ageYears = null;
+    sex = null;
+    pregnant = null;
+    immunocompromised = null;
+    muacCm = null;
+    cfsLevel = null;
+  }
+}
+
 /// Five-tier triage outcome (spec §14).
 enum TriageTier {
   p1(
@@ -290,6 +483,11 @@ enum TriageTier {
   /// The more urgent of [this] and [other] (P1 is index 0).
   TriageTier atMostUrgent(TriageTier other) =>
       urgencyIndex <= other.urgencyIndex ? this : other;
+
+  /// One-tier escalation toward P1 (used by the modifier bump, §13 step 10).
+  /// P1 stays P1 (bump cap).
+  TriageTier bumpOnce() =>
+      urgencyIndex == 0 ? this : TriageTier.values[urgencyIndex - 1];
 }
 
 /// One collected triage session (Sections A/B only for this increment).
@@ -341,6 +539,12 @@ class TriageAnswers {
   /// Section F sepsis screen (§9).
   final SepsisAnswers sepsis = SepsisAnswers();
 
+  /// Burn module inputs (§11 H1-H8 / §22), engaged via "Wound or burn".
+  final BurnAnswers burn = BurnAnswers();
+
+  /// Section I modifiers (§12 I1-I7), collected before the result.
+  final ModifierAnswers modifiers = ModifierAnswers();
+
   void reset() {
     ageGroup = null;
     dangerSigns.clear();
@@ -363,6 +567,8 @@ class TriageAnswers {
     chiefComplaint = null;
     probeAnswers.clear();
     sepsis.reset();
+    burn.reset();
+    modifiers.reset();
   }
 }
 

@@ -78,11 +78,14 @@ void main() {
       // Now at avpu (8th vital). Continue goes to complaint step.
       await _tapContinue(tester);
 
-      // Complaint step: tap "Other problem" to advance to result.
+      // Complaint step: tap "Other problem" to advance.
       await tester.ensureVisible(find.text('Other problem'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Other problem'));
       await tester.pumpAndSettle();
+
+      // Modifiers step: advance past it (no risk factors selected).
+      await _tapContinue(tester);
 
       expect(find.text('P5 - Minor'), findsOneWidget);
       expect(find.textContaining('NEWS2 score: 0'), findsOneWidget);
@@ -113,6 +116,9 @@ void main() {
       await tester.pumpAndSettle();
 
       // Missing SpO2 engages the sepsis screen; Continue through it.
+      await _tapContinue(tester);
+
+      // Modifiers step: advance past it.
       await _tapContinue(tester);
 
       expect(find.textContaining('readings were missing'), findsOneWidget);

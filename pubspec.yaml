@@ -19,8 +19,9 @@ dependencies:
   path_provider: ^2.1.6
   http: ^1.6.0
   image_picker: ^1.2.3
-  device_info_plus: ^13.2.0
+  device_info_plus: ^12.4.0
   flutter_bloc: ^9.1.0
+  flutter_secure_storage: ^9.2.4
 
 dev_dependencies:
   flutter_test:

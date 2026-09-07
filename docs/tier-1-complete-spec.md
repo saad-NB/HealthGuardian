@@ -1186,3 +1186,399 @@ vitalReview = t.vitals.hasPhysiologicallyImpossibleValue ||
 - Informing the missing-parameter conventions (partial score + floor + context-assisted substitution): remote/tele-triage and CDSS documentation on handling unavailable oximetry/thermometry — **citations to be verified against the relevant guidelines during clinical review (open item 5).**
 
 *Version note: This section is appended as a clinical-review draft. It does not change any published scoring thresholds; it defines how missing SpO₂/temperature inputs are treated.*
+
+---
+
+## 22. Burn Module Specification v1.0 — Interactive Lund-Browder Body-Part Map (Sehat Nigraan)
+
+> **Document:** "Sehat Nigraan — Burn Module Specification v1.0" — Draft for Clinical Review (Steering Committee), 2026-09-05.
+> **Replaces:** §11 (Section H) of this document (hand/palm-method Burn Module) and the Appendix D burn guidance. The old §11 hand-method rules above are retained for reference but are **not** the operative rule set; the operative rules are this Section 22.
+
+---
+
+**Table of Contents**
+1. [Purpose & Scope](#221-purpose--scope)
+2. [Interactive Body Map (Front + Back)](#222-interactive-body-map-front--back)
+3. [Sub-Region Interactions (Depth + Partial + Circumferential)](#223-sub-region-interactions-depth--partial--circumferential)
+4. [Interpolation (TBSA%)](#224-interpolation-tbsa)
+5. [Depth-Guided Questions (D-Rule)](#225-depth-guided-questions-d-rule)
+6. [Depth Classification Decision Logic](#226-depth-classification-decision-logic)
+7. [Airway Assessment (A-Rule)](#227-airway-assessment-a-rule)
+8. [Chemical / Electrical Addendum](#228-chemical--electrical-addendum)
+9. [Rule Engine — Decision Table (19 rules)](#229-rule-engine--decision-table-19-rules)
+10. [Vulnerable Population Bumps](#2210-vulnerable-population-bumps)
+11. [Parkland Formula (Decision Support)](#2211-parkland-formula-decision-support)
+12. [Edge Cases & Fail-Closed Defaults](#2212-edge-cases--fail-closed-defaults)
+13. [Integration / Merge with Engine](#2213-integration--merge-with-engine)
+14. [Data Model & Serialization](#2214-data-model--serialization)
+15. [Clinical Validation Plan (Vignettes)](#2215-clinical-validation-plan-vignettes)
+16. [Implementation Phases (B1–B10)](#2216-implementation-phases-b1b10)
+17. [Clinical Sources](#2217-clinical-sources)
+
+---
+
+### 22.1 Purpose & Scope
+
+Replaces the prior hand/palm TBSA estimate with an **interactive, age-adjusted Lund-Browder body-part map** to improve accuracy of burn surface area triage, particularly for children (infant–15y) and adults.
+
+#### 22.1.1 Out of Scope
+
+- Definitive burn-center referral (beyond what the tier rules imply).
+- Wound photography AI analysis.
+- Dressing/palliative care instructions (informational content only; the module returns decision-support text, not prescriptions).
+
+#### 22.1.2 Goals
+
+1. Improve accuracy of burn TBSA estimation vs the hand-method.
+2. Keep capture time under ~60 seconds.
+3. Preserve fail-closed triage (any uncertainty escalates, never down-triages).
+4. Work offline-first (no cloud inference).
+
+#### 22.1.3 Comparison to Prior Design
+
+| Dimension | §11 Hand Method (old) | Burn Module v1.0 (new) |
+|-----------|----------------------|------------------------|
+| TBSA input | Palm = 1%, stepper 0–40% | Body map taps, auto-summed |
+| Age awareness | None | Lund-Browder age bands + interpolation |
+| Depth | Single global "deepest" | Per-region depth capture |
+| Circumferential | Manual Y/N | Auto-detected from F/B pairs |
+| Airway | Y/N checklist | Guided A-rule with fail-closed |
+| Chemical/Electrical | Flat Y/N P1 | Structured addenda |
+| Fluid estimate | — | Parkland (decision-support) |
+| Accuracy bias | Typically overestimates 20–40% | Closer to chart-based reference |
+
+---
+
+### 22.2 Interactive Body Map (Front + Back)
+
+- Default palettes: adult (≥16y), child (5–15y), infant/toddler (0–4y).
+- Two views per figure: **Front** and **Back**.
+- Each view shows 18 selectable sub-regions ⇒ **36 sub-regions total** per figure.
+- Regions are age-sized visually by the palette, and numeric percentages come from the Lund-Browder table with interpolation (see §22.4).
+
+#### 22.2.1 Region Data Model (Region subobject array)
+
+```json
+Region {
+  "id": "F01",                      // unique id, F = front, B = back
+  "side": "front" | "back",
+  "name": "Face",                   // display name
+  "part": "Head",                   // parent part (Head, Neck, Chest, Abdomen, Back, Buttocks, Arms, Legs, Genitals)
+  "percent": [9.0, 8.0, 6.0, 5.0, 4.0, 3.5],   // [Infant, 1Y, 5Y, 10Y, 15Y, Adult]
+  "depth": "superficial" | "partial" | "deep-partial" | "full-thickness" | null,
+  "partial": "whole" | "half",
+  "circumferential": false
+}
+```
+
+#### 22.2.2 Region Tables — Front (F01–F18)
+
+| ID | Part | Sub-Region | Infant | 1Y | 5Y | 10Y | 15Y | Adult |
+|----|------|-----------|--------|----|----|-----|-----|-------|
+| F01 | Head | Face | 9.00 | 8.00 | 6.00 | 5.00 | 4.00 | 3.50 |
+| F02 | Head | Front neck | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 |
+| F03 | Chest | Chest (upper) | 4.50 | 4.50 | 4.50 | 4.50 | 4.50 | 4.50 |
+| F04 | Chest | Chest (lower) | 4.50 | 4.50 | 4.50 | 4.50 | 4.50 | 4.50 |
+| F05 | Abdomen | Abdomen (upper) | 4.50 | 4.50 | 4.50 | 4.50 | 4.50 | 4.50 |
+| F06 | Abdomen | Abdomen (lower) | 4.50 | 4.50 | 4.50 | 4.50 | 4.50 | 4.50 |
+| F07 | Arms | R upper arm | 2.00 | 2.00 | 2.00 | 2.00 | 2.00 | 2.00 |
+| F08 | Arms | R forearm | 1.50 | 1.50 | 1.50 | 1.50 | 1.50 | 1.50 |
+| F09 | Arms | R hand | 1.25 | 1.25 | 1.25 | 1.25 | 1.25 | 1.25 |
+| F10 | Arms | L upper arm | 2.00 | 2.00 | 2.00 | 2.00 | 2.00 | 2.00 |
+| F11 | Arms | L forearm | 1.50 | 1.50 | 1.50 | 1.50 | 1.50 | 1.50 |
+| F12 | Arms | L hand | 1.25 | 1.25 | 1.25 | 1.25 | 1.25 | 1.25 |
+| F13 | Legs | R thigh | 2.75 | 3.25 | 4.00 | 4.25 | 4.50 | 4.75 |
+| F14 | Legs | R lower leg | 2.50 | 2.75 | 2.75 | 3.00 | 3.25 | 3.50 |
+| F15 | Legs | R foot | 1.75 | 1.75 | 1.75 | 1.75 | 1.75 | 1.75 |
+| F16 | Legs | L thigh | 2.75 | 3.25 | 4.00 | 4.25 | 4.50 | 4.75 |
+| F17 | Legs | L lower leg | 2.50 | 2.75 | 2.75 | 3.00 | 3.25 | 3.50 |
+| F18 | Legs | L foot | 1.75 | 1.75 | 1.75 | 1.75 | 1.75 | 1.75 |
+
+#### 22.2.3 Region Tables — Back (B01–B18)
+
+| ID | Part | Sub-Region | Infant | 1Y | 5Y | 10Y | 15Y | Adult |
+|----|------|-----------|--------|----|----|-----|-----|-------|
+| B01 | Head | Scalp | 9.00 | 8.00 | 6.00 | 5.00 | 4.00 | 3.50 |
+| B02 | Head | Back of neck | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 |
+| B03 | Back | Upper back | 4.50 | 4.50 | 4.50 | 4.50 | 4.50 | 4.50 |
+| B04 | Back | Lower back | 4.50 | 4.50 | 4.50 | 4.50 | 4.50 | 4.50 |
+| B05 | Buttocks | Buttocks | 5.00 | 5.00 | 5.00 | 5.00 | 5.00 | 5.00 |
+| B06 | Arms | R upper arm (back) | 2.00 | 2.00 | 2.00 | 2.00 | 2.00 | 2.00 |
+| B07 | Arms | R forearm (back) | 1.50 | 1.50 | 1.50 | 1.50 | 1.50 | 1.50 |
+| B08 | Arms | R hand (back) | 1.25 | 1.25 | 1.25 | 1.25 | 1.25 | 1.25 |
+| B09 | Arms | L upper arm (back) | 2.00 | 2.00 | 2.00 | 2.00 | 2.00 | 2.00 |
+| B10 | Arms | L forearm (back) | 1.50 | 1.50 | 1.50 | 1.50 | 1.50 | 1.50 |
+| B11 | Arms | L hand (back) | 1.25 | 1.25 | 1.25 | 1.25 | 1.25 | 1.25 |
+| B12 | Legs | R thigh (back) | 2.75 | 3.25 | 4.00 | 4.25 | 4.50 | 4.75 |
+| B13 | Legs | R lower leg (back) | 2.50 | 2.75 | 2.75 | 3.00 | 3.25 | 3.50 |
+| B14 | Legs | R foot (back) | 1.75 | 1.75 | 1.75 | 1.75 | 1.75 | 1.75 |
+| B15 | Legs | L thigh (back) | 2.75 | 3.25 | 4.00 | 4.25 | 4.50 | 4.75 |
+| B16 | Legs | L lower leg (back) | 2.50 | 2.75 | 2.75 | 3.00 | 3.25 | 3.50 |
+| B17 | Legs | L foot (back) | 1.75 | 1.75 | 1.75 | 1.75 | 1.75 | 1.75 |
+| B18 | Genitals | Genitals | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 |
+
+#### 22.2.4 Percent Constant Rule
+
+For constant regions (neck, chest, abdomen, back, buttocks, arms, hands, feet, genitals), `percent` is the **same across all age columns**. For variable regions (face, scalp, thighs, lower legs), `percent` interpolates between the bracketed control points (see §22.4).
+
+#### 22.2.5 Orientation
+
+- **Front** view lists, top-to-bottom: Face, Front neck, Chest (upper/lower), Abdomen (upper/lower), Genitals, R arm (upper/forearm/hand), L arm (upper/forearm/hand), R leg (thigh/lower/foot), L leg (thigh/lower/foot).
+- **Back** view lists: Scalp, Back of neck, Upper back, Lower back, Buttocks, R arm back, L arm back, R leg back, L leg back.
+
+---
+
+### 22.3 Sub-Region Interactions (Depth + Partial + Circumferential)
+
+#### 22.3.1 Depth Mapping
+
+Each selected region stores exactly one of:
+
+| Depth | Typical appearance | Fail-closed default |
+|-------|-------------------|---------------------|
+| superficial | Red, dry, no blister | n/a |
+| partial | Weeping, blistered | if unsure → treat as deep-partial |
+| deep-partial | Waxy/white, less painful | if unsure → treat as full-thickness |
+| full-thickness | Leathery/charred/black, painless | n/a |
+
+#### 22.3.2 Partial-Segment Options
+
+- Tap once = **whole region** (contrib = region%).
+- Tap twice (or half-seg toggle) = **half or less** (contrib = region% × 0.5).
+- Applied per-region (front and back views independent).
+
+#### 22.3.3 Circumferential Detection (360°)
+
+- If a limb/torso region is shaded on **both** the front and its paired back region → auto-flag that part as **circumferential**.
+- Pairs: (F03,F04)↔(B03), (F05,F06)↔(B05), arm F07–F12 ↔ B06–B11, leg F13–F18 ↔ B12–B17, neck F02↔B02.
+- Circumferential flag feeds rule 4 and rule 18 (compartment risk).
+
+#### 22.3.4 Circumferential & Region Summary
+
+| Part | Front regions | Back pair | Circumferential when |
+|------|---------------|-----------|----------------------|
+| Neck | F02 | B02 | both shaded |
+| Chest | F03, F04 | B03 | any chest + upper back |
+| Abdomen | F05, F06 | B04 | any abdomen + lower back |
+| Arm (each) | F07–F12 | B06–B11 | matching segment both sides |
+| Leg (each) | F13–F18 | B12–B17 | matching segment both sides |
+
+---
+
+### 22.4 Interpolation (TBSA%)
+
+#### 22.4.1 Control Points
+
+Percent columns act as control points at ages: Infant (0y), 1Y, 5Y, 10Y, 15Y, Adult (16y+). For a given age **A**:
+
+- `A < 1y` → use Infant column.
+- `1y ≤ A < 5y` → linear interp between 1Y and 5Y columns.
+- `5y ≤ A < 10y` → linear interp between 5Y and 10Y columns.
+- `10y ≤ A < 15y` → linear interp between 10Y and 15Y columns.
+- `A ≥ 15y` → linear interp between 15Y and Adult columns.
+
+Piecewise-linear; each segment uses its own adjacent brackets.
+
+#### 22.4.2 Numerical Example (IP-01)
+
+Child, age **3y**, scald to right arm, front view only, whole region, partial thickness:
+- R upper arm (F07) = 3.25 interp ⇒ 3.00
+- R forearm (F08) = 2.75 interp ⇒ 2.75
+- R hand (F09) = 2.50 interp ⇒ 2.50
+- TBSA = 3.00 + 2.75 + 2.50 = **8.25%** (partial, front). Back unshaded ⇒ no circumferential.
+
+#### 22.4.3 Verification
+
+Unit tests assert: every age column of the front + back tables sums to **100.00% ± 0.25%** (rounding tolerance), and interpolation returns the bracket endpoints exactly at control ages.
+
+---
+
+### 22.5 Depth-Guided Questions (D-Rule)
+
+Prompted per non-superficial selected region when the user has not specified depth directly:
+
+| ID | Question | Options |
+|----|----------|---------|
+| D1 | What does the affected area look like? | a) Red, dry, blistered b) Blistered, weeping c) White/waxy/leathery/charred d) Unsure |
+| D2 | Is the area painful? | a) Painful b) A little painful c) Not painful |
+| D3 | Does it stay warm or feel cool? | a) Warm b) Slightly warm c) Cool/dull |
+
+**Classification (mapping):**
+
+| D1 | D2 | D3 | Depth |
+|----|----|----|-------|
+| a | a | a | superficial |
+| a | b | b | partial |
+| b | a/b | a/b | partial |
+| b | c | b/c | deep-partial |
+| c | any | c | full-thickness |
+| d (unsure) | any | any | deep-partial *(fail-closed)* |
+
+---
+
+### 22.6 Depth Classification Decision Logic
+
+Pure, side-effect-free function `classifyDepth(d1, d2, d3): Depth`; default is **deep-partial** on any uncertainty. Fail-closed ordering: full-thickness > deep-partial > partial > superficial when the signals admit multiple readings.
+
+---
+
+### 22.7 Airway Assessment (A-Rule)
+
+Assessed when the burn involves face, neck, chest, or any source with possible inhalation (closed-space fire, flame):
+
+| ID | Ask (Y/N) | P1 trigger |
+|----|-----------|-----------|
+| A1 | Hoarse voice? | YES |
+| A2 | Soot in mouth/nostrils? | YES |
+| A3 | Singed nasal hairs? | YES |
+| A4 | Facial burn with facial swelling? | YES |
+| A5 | Circumferential neck burn? | YES |
+| A6 | Coughing black sputum? | YES |
+| A7 | Stridor? | YES (immediate P1) |
+
+Any A1–A7 = YES ⇒ **P1 (inhalation injury risk)**. A7 also triggers DANGER-tab "breathing difficulty" wire-through.
+
+---
+
+### 22.8 Chemical / Electrical Addendum
+
+- **Chemical:** substance, container, eye involvement, mouth involvement. Eye/mouth/perineum + chemical ⇒ P2 (rule 10); any chemical with unknown substance ⇒ P3.
+- **Electrical:** electrocution (high voltage vs household), entrance/exit wound, chest pain/palpitations, loss of consciousness, tetany. Any of (chest pain, ECG-consistent, LOC, tetany, high voltage) ⇒ **P1** (rule 2 override). Household, no symptoms ⇒ P3 evaluation.
+
+---
+
+### 22.9 Rule Engine — Decision Table (19 rules)
+
+Rules evaluated top-down; first matching rule wins except where explicitly noted. Tier values are final module tiers before vulnerability bumps (§22.10) and before merge (§22.13).
+
+| # | Condition | Tier | Rule hook / reason |
+|---|-----------|------|--------------------|
+| 1 | Any airway sign A1–A7 | **P1** | Inhalation injury |
+| 2 | Chemical (unknown/eye/mouth/perineum) or any electrical with symptoms | **P1** | Hidden internal injury |
+| 3 | Face/hands/feet/genitals/major-joint burn that is full-thickness | **P1** | Functional/cosmetic |
+| 4 | Any circumferential full-thickness burn | **P1** | Compartment risk |
+| 5 | TBSA ≥ 20% (adult ≥ 16y) or ≥ 10% (child < 16y) | **P2** | Fluid resuscitation threshold |
+| 6 | Full-thickness > 1% TBSA (any location) | **P2** | Burn center |
+| 7 | Face, hands, feet, genitals, major joints (any depth) | **P2** | Functional/cosmetic risk |
+| 8 | Deep-partial covering > 5% TBSA | **P2** | Excision threshold |
+| 9 | Circumferential non-full-thickness (partial/deep) limb or torso | **P2** | Compartment surveillance |
+| 10 | Electrolyte/chemical to eyes, mouth, or perineum | **P2** | Critical structure |
+| 11 | Scald/flame, partial, TBSA ≥ 6% (child) or ≥ 11% (adult), up to 9%/19% band | **P3** | Moderate burn |
+| 12 | Partial-thickness, TBSA < 6% (child) / < 11% (adult), single region, no risk areas | **P4** | Outpatient possible |
+| 13 | Deep-partial or full-thickness tiny (≤ 1%, e.g., single finger), no risk areas | **P4** | Outpatient possible |
+| 14 | Superficial only, TBSA ≤ 1%, no risk areas | **P5** | Self-care |
+| 15 | Contaminated burn (soil, sewage, animal/human bite, metal shavings) | **P3** | Infection risk |
+| 16 | Diabetic / immunocompromised / peripheral vascular disease | **P3** | Infection risk |
+| 17 | No regions selected | — | No burn — return to main flow |
+| 18 | Circumferential full-thickness with distal pulse/cap-refill abnormality | **P1** | Compartment/surgical emergency |
+| 19 | Face or genital burn with inhalational spread | **P1** | High risk |
+
+Priority order: 1–10 > 11–16; 18, 19 override 11–16 when their preconditions hold. Message text mirrors the main engine tier semantics (P1 red, P2 amber, P3 yellow, P4 green, P5 blue/informational).
+
+---
+
+### 22.10 Vulnerable Population Bumps
+
+Applied once, after the decision table, before merge:
+
+- Age < 5y or > 60y with any burn ⇒ +1 tier bump (max useful at P2 floor per rule 9; i.e., a P3/P4 result bumps toward P2 but never upstages a P1/P2 rule hit).
+- Immunocompromised, diabetic, or PVD (rule 16 already P3) — no double bump.
+- Multiple coexisting vulnerable flags: **single** bump only.
+
+---
+
+### 22.11 Parkland Formula (Decision Support)
+
+- Applied when TBSA ≥ 20% (adult ≥ 16y) or ≥ 10% (child < 16y).
+- `Total = 4 mL × weight(kg) × TBSA%` over 24h; **half in the first 8h**; crystalloid (Ringer's Lactate preferred).
+- Weight source: stepper + estimate; required for output.
+- Weight clamp: 2–200 kg. Out-of-range → prompt the user (never silently assume).
+- Output always labeled: **"Decision support — for clinician use; not a prescription."**
+
+---
+
+### 22.12 Edge Cases & Fail-Closed Defaults
+
+| Case | Behavior |
+|------|----------|
+| No regions selected | Module skipped; returns to main flow (rule 17) |
+| Depth unsure (d) | deep-partial (fail-closed) |
+| TBSA rounding at 0.05 | round half up (never down-triages) |
+| Partial + circumferential both | treated as circumferential depth escalated |
+| Burn + other complaint | merge tier = max(burnTier, otherTier) |
+| Parking/metadata missing | module instructs "weight required" and still returns tier |
+
+---
+
+### 22.13 Integration / Merge with Engine
+
+- The Burn Module runs **at step 7** of the Tier-1 pipeline (after NEWS2/PEWS + complaint probes, before §12 modifiers).
+- `engineTier = max(existingTier, burnTier)`; vulnerability bump applied exactly once globally.
+- Result payload appends `contributingModules.burn`; UI shows burn reasons alongside existing tier reasons.
+- Validation gate: burn module must never down-tier an existing P1/P2.
+
+---
+
+### 22.14 Data Model & Serialization
+
+```json
+BurnAssessment {
+  "cause": "flame" | "scald" | "chemical" | "electrical" | "contact" | "other",
+  "timeSinceInjuryHours": number,
+  "airway": { "hoarseness": false, "soot": false, "singedHairs": false, "facialSwelling": false, "neckCircumferential": false, "blackSputum": false, "stridor": false },
+  "regions": [
+    { "id": "F07", "depth": "partial", "partial": "whole", "circumferential": false }
+  ],
+  "tbsa": { "total": 8.25, "front": 8.25, "back": 0 },
+  "parkland": { "totalMl": 1650, "firstHalfMl": 825, "note": "decision-support only" },
+  "tier": "P3"
+}
+```
+
+Stored under `contributingModules.burn` in the record (cf. §21.9 stored-record shape).
+
+---
+
+### 22.15 Clinical Validation Plan (Vignettes)
+
+25 burn vignettes appended to the §17 battery:
+
+- 5 infant/child age-interpolation cases (2y, 3y, 6y, 12y, 14y).
+- 6 depth-classification cases (D-rule paths incl. unsure).
+- 4 circumferential detection cases (paired F/B, one non-circ).
+- 4 airway cases (each A-rule alone → P1).
+- 3 chemical/electrical cases.
+- 3 Parkland cases (incl. under/above clamps).
+- Plus the 4 E2E golden cases: child 3y scald arm (P3), adult 25% flame (P1), infant 6% partial (P2), solo superficial <1% (P5).
+
+Gate: app tier must be ≥ clinician tier; any under-triage is a release blocker (same criterion as §17/§21.10).
+
+---
+
+### 22.16 Implementation Phases (B1–B10)
+
+| Phase | Deliverable | Exit criterion |
+|-------|-------------|----------------|
+| B1 | Body-map widget (front/back) | 36 regions render/tap |
+| B2 | Region tap + depth + half-seg | State model unit-tested |
+| B3 | Age palette + interpolation | Interp math tests |
+| B4 | Circumferential detection | F/B pair tests |
+| B5 | Rule engine (19 rules) | Rule matrix tests |
+| B6 | Parkland output | Clamp/calculator tests |
+| B7 | Serialization + record | JSON round-trip |
+| B8 | Golden vignettes | 25/25 pass |
+| B9 | E2E on device | 4/4 golden pass |
+| B10 | Clinical review gate | Sign-off before release |
+
+---
+
+### 22.17 Clinical Sources
+
+- Lund & Browder, *Am J Surg*, 1944 — age-banded TBSA chart (basis of §22.2 tables).
+- Parkland formula (Baxter & Shires) — resuscitation reference for §22.11.
+- ABA Burn Center Referral Criteria (2022) — burn-center threshold justifications in the rule table.
+- WHO/PAHO burn first-aid + burn triage guidance — depth terminology and child-burn classifiers.
+
+---
+
+*Append note: Burn Module v1.0 is appended as a clinical-review draft and **replaces** §11 (Section H) hand/palm-method rules. It does not change scoring thresholds in §4–§9.*

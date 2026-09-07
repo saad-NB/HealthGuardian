@@ -1,12 +1,19 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
+import '../../../triage/engine.dart';
 import '../../../triage/models.dart';
+import '../../../triage/record.dart';
+import '../../../triage/record_store.dart';
 import '../../theme/app_tokens.dart';
 import '../../widgets/answer_chip.dart';
 import '../../widgets/question_scaffold.dart';
+import 'burn_step.dart';
 import 'complaint_step.dart';
 import 'danger_signs_step.dart';
 import 'gcs_step.dart';
+import 'modifiers_step.dart';
 import 'probes_step.dart';
 import 'result_step.dart';
 import 'sepsis_step.dart';
@@ -62,6 +69,16 @@ class ProbesNode extends Node {
 /// Section F sepsis screen.
 class SepsisNode extends Node {
   const SepsisNode();
+}
+
+/// Section H burn module (shown only for the wound/burn complaint).
+class BurnNode extends Node {
+  const BurnNode();
+}
+
+/// Section I modifiers (bump-after-merge).
+class ModifiersNode extends Node {
+  const ModifiersNode();
 }
 
 /// Whether GCS is indicated at all (spec §6).
@@ -150,13 +167,25 @@ List<Node> _buildNodes(TriageAnswers a) {
     nodes.add(const SepsisNode());
   }
 
+  // Burn module for the wound/burn complaint (spec §11/§22, step 7).
+  if (a.chiefComplaint == ChiefComplaint.wound) {
+    nodes.add(const BurnNode());
+  }
+
+  // Modifiers run after the merge candidates, before the result (§12/§13).
+  nodes.add(const ModifiersNode());
+
   nodes.add(const ResultNode());
   return nodes;
 }
 
 /// Drives the adaptive triage walkthrough (UI/UX plan §5.2, §6–§9).
 class TriageFlowScreen extends StatefulWidget {
-  const TriageFlowScreen({super.key});
+  const TriageFlowScreen({super.key, this.store});
+
+  /// Record persistence; defaults to the encrypted local store. Injected in
+  /// tests to avoid hitting the platform keystore.
+  final TriageRecordStore? store;
 
   @override
   State<TriageFlowScreen> createState() => _TriageFlowScreenState();
@@ -164,15 +193,46 @@ class TriageFlowScreen extends StatefulWidget {
 
 class _TriageFlowScreenState extends State<TriageFlowScreen> {
   final TriageAnswers _answers = TriageAnswers();
+  late final TriageRecordStore _store =
+      widget.store ?? TriageRecordStore();
   int _step = 0;
   bool _jumpedToResult = false;
+
+  /// Content fingerprint of the last record persisted for this session, so
+  /// editing vitals and landing on the result again stores an updated record
+  /// instead of a duplicate. Cleared on restart (§15 idempotency).
+  String? _savedFingerprint;
 
   List<Node> get _nodes => _buildNodes(_answers);
   int get _nodeCount => _nodes.length;
 
+  /// Fingerprint that ignores [TriageRecord.triageId] and timestamp so
+  /// re-landing on the same result does not duplicate the record.
+  String _contentFingerprint(TriageRecord r) {
+    final json = r.toJson()
+      ..remove('triageId')
+      ..remove('timestamp');
+    return jsonEncode(json);
+  }
+
+  Future<void> _saveResult(TriageAnswers answers) async {
+    try {
+      final record = TriageEngine.computeRecord(answers);
+      final fingerprint = _contentFingerprint(record);
+      if (fingerprint == _savedFingerprint) return;
+      _savedFingerprint = fingerprint;
+      await _store.save(record);
+    } catch (_) {
+      // Fire-and-forget: a failed save must not block the walkthrough.
+    }
+  }
+
   void _goTo(int index) => setState(() {
         _step = index.clamp(0, _nodeCount - 1);
         _jumpedToResult = false;
+        if (_nodes[_step] is ResultNode) {
+          _saveResult(_answers);
+        }
       });
 
   void _next() {
@@ -187,6 +247,7 @@ class _TriageFlowScreenState extends State<TriageFlowScreen> {
         _answers.reset();
         _step = 0;
         _jumpedToResult = false;
+        _savedFingerprint = null;
       });
 
   void _dangerContinue() {
@@ -195,6 +256,7 @@ class _TriageFlowScreenState extends State<TriageFlowScreen> {
         _step = _nodeCount - 1;
         _jumpedToResult = true;
       });
+      _saveResult(_answers);
     } else {
       _next();
     }
@@ -281,6 +343,26 @@ class _TriageFlowScreenState extends State<TriageFlowScreen> {
           progress: index,
           steps: count,
           onContinue: _next,
+          onBack: () => _goTo(index - 1),
+          onRestart: _restart,
+        );
+      case BurnNode():
+        return BurnStep(
+          answers: _answers,
+          progress: index,
+          steps: count,
+          onAdvanced: _next,
+          onRefresh: () => setState(() {}),
+          onBack: () => _goTo(index - 1),
+          onRestart: _restart,
+        );
+      case ModifiersNode():
+        return ModifiersStep(
+          answers: _answers,
+          progress: index,
+          steps: count,
+          onAdvance: _next,
+          onRefresh: () => setState(() {}),
           onBack: () => _goTo(index - 1),
           onRestart: _restart,
         );
