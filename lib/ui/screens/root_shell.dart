@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 
 import '../../state/app_state.dart';
 import '../../screens/files_screen.dart';
+import 'chat_screen.dart';
 import 'history_screen.dart';
 import 'start_screen.dart';
 
-/// Three-tab app shell (UI/UX plan §5.1): Start / History / Models.
+/// App shell (UI/UX plan §5.1): Start / History / Models + the "Ask AI" chat
+/// (ADR-014). IndexedStack keeps flow state alive across tab switches.
 class RootShell extends StatefulWidget {
   const RootShell({super.key, required this.app});
 
@@ -27,6 +29,7 @@ class _RootShellState extends State<RootShell> {
           StartScreen(app: widget.app),
           const HistoryScreen(),
           FilesScreen(app: widget.app),
+          ChatScreen(app: widget.app),
         ],
       ),
       bottomNavigationBar: NavigationBar(
@@ -48,6 +51,11 @@ class _RootShellState extends State<RootShell> {
             icon: Icon(Icons.save_outlined),
             selectedIcon: Icon(Icons.save),
             label: 'Models',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.smart_toy_outlined),
+            selectedIcon: Icon(Icons.smart_toy),
+            label: 'Ask AI',
           ),
         ],
       ),

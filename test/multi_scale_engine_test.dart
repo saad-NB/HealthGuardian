@@ -431,7 +431,7 @@ void main() {
       final a = _pedNormal();
       final rec = TriageEngine.computeRecord(a);
       expect(rec.triageId, startsWith('tg-'));
-      expect(rec.version, '2.0');
+      expect(rec.version, '2.1');
       expect(rec.finalTier, TriageTier.p5);
       expect(rec.contributingScores['vital'], isA<Map<String, dynamic>>());
       // ADR-013: SBP optional for children, so no missing-param flags.

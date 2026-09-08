@@ -2,10 +2,13 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
+import '../../../services/tier2_service.dart';
+import '../../../state/app_state.dart';
 import '../../../triage/engine.dart';
 import '../../../triage/models.dart';
 import '../../../triage/record.dart';
 import '../../../triage/record_store.dart';
+import '../../../triage/tier2.dart';
 import '../../theme/app_tokens.dart';
 import '../../widgets/answer_chip.dart';
 import '../../widgets/question_scaffold.dart';
@@ -181,11 +184,22 @@ List<Node> _buildNodes(TriageAnswers a) {
 
 /// Drives the adaptive triage walkthrough (UI/UX plan §5.2, §6–§9).
 class TriageFlowScreen extends StatefulWidget {
-  const TriageFlowScreen({super.key, this.store});
+  const TriageFlowScreen({
+    super.key,
+    this.store,
+    this.app,
+    this.tier2Service,
+  });
 
   /// Record persistence; defaults to the encrypted local store. Injected in
   /// tests to avoid hitting the platform keystore.
   final TriageRecordStore? store;
+
+  /// Shared state; used to open the post-triage chat when [tier2Service] runs.
+  final AppState? app;
+
+  /// Optional Tier 2 service. When null the result step hides AI features.
+  final Tier2Service? tier2Service;
 
   @override
   State<TriageFlowScreen> createState() => _TriageFlowScreenState();
@@ -206,10 +220,11 @@ class _TriageFlowScreenState extends State<TriageFlowScreen> {
   List<Node> get _nodes => _buildNodes(_answers);
   int get _nodeCount => _nodes.length;
 
-  /// Fingerprint that ignores [TriageRecord.triageId] and timestamp so
-  /// re-landing on the same result does not duplicate the record.
+  /// Fingerprint that ignores [TriageRecord.triageId] and timestamp (and the
+  /// advisory [TriageRecord.tier2] block) so re-landing on the same result
+  /// does not duplicate the record (ADR-014).
   String _contentFingerprint(TriageRecord r) {
-    final json = r.toJson()
+    final json = jsonWithoutTier2(r.toJson())
       ..remove('triageId')
       ..remove('timestamp');
     return jsonEncode(json);
@@ -222,6 +237,17 @@ class _TriageFlowScreenState extends State<TriageFlowScreen> {
       if (fingerprint == _savedFingerprint) return;
       _savedFingerprint = fingerprint;
       await _store.save(record);
+    } catch (_) {
+      // Fire-and-forget: a failed save must not block the walkthrough.
+    }
+  }
+
+  /// Upserts the same session record (idempotent by [TriageRecord.triageId])
+  /// with the Tier 2 advisory block attached.
+  Future<void> _saveTier2(TriageAnswers answers, Tier2Assessment ai) async {
+    try {
+      final base = TriageEngine.computeRecord(answers);
+      await _store.save(base.withTier2(ai));
     } catch (_) {
       // Fire-and-forget: a failed save must not block the walkthrough.
     }
@@ -377,6 +403,9 @@ class _TriageFlowScreenState extends State<TriageFlowScreen> {
           onEditDanger: () => _goTo(_dangerIndex()),
           onRestart: _restart,
           jumpedFromDanger: _jumpedToResult,
+          app: widget.app,
+          tier2Service: widget.tier2Service,
+          onTier2Complete: (ai) => _saveTier2(_answers, ai),
         );
     }
   }

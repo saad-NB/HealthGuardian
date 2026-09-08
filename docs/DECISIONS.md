@@ -280,3 +280,29 @@ org.gradle.daemon=false
 - Fully-measured (per collectable set) healthy child now maps to P5; healthy neonate to the P4 age floor (spec §5.3), with no review banner.
 - Genuinely-missing required params (HR, RR, consciousness, temperature, SpO2, refill/feeding) still floor to P3 review -- fail-closed preserved.
 - Windows e2e harness scenarios `toddlerPedsNews2CapRefill` and `newbornPewsFeedingReview` updated to assert the corrected tiers.
+
+---
+
+## ADR-014: Tier 2 structured output via prompt-constrained JSON (no GBNF in fllama) + both-flags result display
+
+**Date:** 2026-09-08
+**Status:** Accepted
+
+**Context:** Tier 2 (MedGemma-1.5-4B) must return a triage grade + a 4–6 line summary. Roadmap v0.4.0 planned GBNF grammar-constrained JSON. Inspection of fllama's API (`OpenAiRequest` in `fllama-.../lib/misc/openai.dart`) shows **no grammar/GBNF parameter exists**, so grammar-constrained output is impossible without forking fllama. Separately, ADR-005 defines escalation-only `max()` merging; the product decision is to keep **both flags visible** on the result screen (Tier 1 flag first, then the AI flag + description) so provenance is transparent.
+
+**Decision:**
+1. **Structured output = strict-JSON system prompt + tolerant parser + fail-closed fallback.** The model is told to reply with a single JSON object only (`triage_level` P1–P5, `summary` 4–6 lines, `requires_human_verification`). `Tier2Parser` extracts the first brace-balanced object, decodes leniently, validates the tier, and **fails closed**: unparsable/off-schema output → `suggestion: null`, Tier 1 result stands untouched (ADR-005 invariant preserved). The parser never guesses an escalation.
+2. **Both-flags display (ADR-005 stays the merge rule).** The result screen shows the Tier 1 banner (flag + description) first, then an "AI analysis" card with the AI flag + description + summary. If the AI flags a higher tier, a one-line merge note renders `Tier 1: P2 · AI: P1 → final P1`. Record `finalTier` remains the authoritative Tier 1; the tier 2 block is advisory.
+3. **Chat transcripts are ephemeral.** Post-triage context chat and the main "Ask AI" tab attach a read-only patient context block (post-triage only) and are never persisted. Only the triage summary (Tier 2 suggestion + summary text) is stored in the record.
+4. **Record schema v2.1 (additive).** `TriageRecord` gains an optional `tier2` block `{suggestion, summary, escalated, latencyMs}`. `fromJson` is tolerant (absent → null) so legacy v2.0 records load unchanged. The record's content fingerprint strips the `tier2` block so the tier-1 save and the post-tier-2 upsert dedupe to one entry (keyed by `triageId`).
+
+**Alternatives considered:**
+1. **Fork fllama to add GBNF grammar** -- rejected: heavy fork maintenance for an MVP; prompt+parse gives equivalent guarantees with fail-closed safety.
+2. **Tool/function calling** -- rejected: `ToolChoice`/`tools` exist in fllama's API but chat-template/tool support for Gemma is unverified and lossy for free-text summaries.
+3. **Replace the Tier 1 banner with the merged tier** -- rejected: hides provenance and the user's earlier requirement to show Tier 1 first, then the AI flag/description.
+
+**Consequences:**
+- Tier 2 output is advisory-by-default; escalation requires a parsed, validated P1–P5.
+- Strict prompts + `Tier2Parser` + merge invariant are unit-tested headless (Pillars A–D).
+- Roadmap item "GBNF grammar-constrained JSON output" is superseded by prompt-constrained JSON (documented above); revisit only if fllama adds grammar support.
+- Record version bumped to `2.1`; History shows an "AI ↑" indicator when the AI escalated.

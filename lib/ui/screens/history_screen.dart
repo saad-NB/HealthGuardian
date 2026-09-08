@@ -84,7 +84,19 @@ class _HistoryScreenState extends State<HistoryScreen> {
           backgroundColor: tier.color,
           child: Text(tier.urgencyIndex + 1 == 1 ? '!' : 'P${tier.urgencyIndex + 1}'),
         ),
-        title: Text(_title(record)),
+        title: Row(
+          children: [
+            Flexible(child: Text(_title(record))),
+            if (record.aiEscalated) ...[
+              const SizedBox(width: 8),
+              const Icon(Icons.arrow_upward, size: 14, color: AppColors.textSubdued),
+              Text(
+                'AI ↑',
+                style: Theme.of(context).textTheme.labelSmall,
+              ),
+            ],
+          ],
+        ),
         subtitle: Text(_subtitle(record)),
         isThreeLine: true,
         onTap: () => _showRecord(context, record),
@@ -151,6 +163,33 @@ class _HistoryScreenState extends State<HistoryScreen> {
                   'Missing: ${record.missingParams.join(', ')}',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
+              ],
+              if (record.tier2 != null) ...[
+                const SizedBox(height: 12),
+                const Divider(),
+                Text('AI analysis', style: Theme.of(context).textTheme.titleSmall),
+                const SizedBox(height: 6),
+                Text(
+                  record.tier2!.hasSuggestion
+                      ? 'Suggestion: ${record.tier2!.suggestion!.name.toUpperCase()}'
+                      : 'Suggestion: no change',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+                if (record.aiEscalated) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    'AI raised urgency vs Tier 1 (${record.finalTier.name.toUpperCase()}) — clinical review required.',
+                    style: const TextStyle(
+                      color: Color(0xFFD32F2F),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+                if (record.tier2!.summary.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(record.tier2!.summary,
+                      style: Theme.of(context).textTheme.bodySmall),
+                ],
               ],
               const SizedBox(height: 16),
               Text(

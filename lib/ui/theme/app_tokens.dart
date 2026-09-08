@@ -11,6 +11,7 @@ class AppColors {
 
   static const background = Color(0xFF121416);
   static const surface = Color(0xFF1D2125);
+  static const border = Color(0xFF333A40);
 
   static const textPrimary = Color(0xFFECF0F2);
   static const textSubdued = Color(0xFF9AA6AD);

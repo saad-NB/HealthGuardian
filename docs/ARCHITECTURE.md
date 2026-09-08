@@ -38,10 +38,12 @@ Output Layer -- triage result, SOAP-style summary, red flags, recommended action
 - No network dependency
 
 ### Tier 2 (MedGemma LLM, Optional Enhancement)
-- Only runs if device has sufficient RAM (~4 GB free)
-- Inputs: free-text patient history + all Tier 1 structured findings
-- Outputs: SOAP-formatted narrative, can only ESCALATE Tier 1, never downgrade
-- Architectural guarantee: `triage_level_final = max(triage_level_base, tier2_suggestion)`
+- Only runs if device has sufficient RAM (~4 GB free) and the GGUF is present (Models tab / adb)
+- Inputs: structured Tier 1 payload (spec §16) — patient summary, vitals, GCS, complaint probes, sepsis screen, modifiers, Tier 1 result
+- Outputs: AI triage grade + 4–6 line summary (strict-JSON prompted; `Tier2Parser` fails closed on unparsable output)
+- Can only ESCALATE Tier 1, never downgrade: `triage_level_final = max(triage_level_base, tier2_suggestion)`
+- Result screen shows **both flags**: Tier 1 banner first, then the AI flag + description (ADR-014); record stores Tier 2 as an advisory `tier2` block (record v2.1)
+- Post-triage "Ask about this result" chat and the main "Ask AI" tab attach a read-only context block (post-triage only); chat transcripts are ephemeral
 
 ## Key Design Decisions
 

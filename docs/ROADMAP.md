@@ -71,10 +71,13 @@ Items explicitly out of scope for the current MVP. These are intentionally visib
 - [ ] Risk-tier threshold calibration
 
 ### v0.4.0 - Tier 2 Integration
-- [ ] MedGemma Tier 2 prompt engineering
-- [ ] GBNF grammar-constrained JSON output
-- [ ] Max() merge rule implementation
-- [ ] Invariant tests
+- [x] MedGemma Tier 2 prompt engineering (strict JSON schema, escalation-only)
+- [x] Structured JSON output via prompt + tolerant parser (fail-closed; GBNF **not** available in fllama — see ADR-014)
+- [x] Max() merge rule implementation (escalation-only, enforced in `Tier2Assessment.merge`)
+- [x] Invariant tests
+- [x] Result screen: both-flags display (Tier 1 first, then AI flag + description) + AI summary card
+- [x] Post-triage context chat + main "Ask AI" tab
+- [x] Record v2.1 additive `tier2` block (tolerant `fromJson`, legacy v2.0 loads)
 
 ### v1.0.0 - MVP Release
 - [ ] Voice input/output (STT/TTS)

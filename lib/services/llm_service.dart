@@ -35,8 +35,14 @@ class LlmService {
       'diagnosis as certain.';
 
   /// Sends [prompt] (+ optional [imageBytes]) and yields generated text.
+  ///
+  /// [systemPrompt] overrides the default [systemMessage]; pass `null` to use
+  /// the default. [history] carries prior turns as User/Assistant messages
+  /// (never a system role) so multi-turn chat stays grounded.
   Stream<String> chat(
     String prompt, {
+    String? systemPrompt,
+    List<Message>? history,
     Uint8List? imageBytes,
     void Function(String fullOutput, int elapsedMs)? onFinished,
   }) async* {
@@ -51,11 +57,14 @@ class LlmService {
     }
     userText.write(prompt.trim());
 
+    final messages = <Message>[
+      Message(Role.system, systemPrompt ?? systemMessage),
+      ...?history,
+      Message(Role.user, userText.toString()),
+    ];
+
     final request = OpenAiRequest(
-      messages: [
-        Message(Role.system, systemMessage),
-        Message(Role.user, userText.toString()),
-      ],
+      messages: messages,
       modelPath: modelPath,
       mmprojPath: isVision ? mmprojPath : null,
       numGpuLayers: numGpuLayers,
