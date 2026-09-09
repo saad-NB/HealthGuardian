@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../services/tier2_service.dart';
 import '../../state/app_state.dart';
 import '../theme/app_tokens.dart';
 import '../widgets/big_button.dart';
@@ -63,7 +64,10 @@ class StartScreen extends StatelessWidget {
                   onPressed: () {
                     Navigator.of(context).push(
                       MaterialPageRoute<void>(
-                        builder: (_) => const TriageFlowScreen(),
+                        builder: (_) => TriageFlowScreen(
+                          app: app,
+                          tier2Service: Tier2Service(app: app),
+                        ),
                       ),
                     );
                   },

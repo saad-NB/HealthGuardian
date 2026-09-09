@@ -43,7 +43,9 @@ Output Layer -- triage result, SOAP-style summary, red flags, recommended action
 - Outputs: AI triage grade + 4–6 line summary (strict-JSON prompted; `Tier2Parser` fails closed on unparsable output)
 - Can only ESCALATE Tier 1, never downgrade: `triage_level_final = max(triage_level_base, tier2_suggestion)`
 - Result screen shows **both flags**: Tier 1 banner first, then the AI flag + description (ADR-014); record stores Tier 2 as an advisory `tier2` block (record v2.1)
+- Token budgets are dynamic (`InferenceBudget`): chat 3072 context / summary 4096 context; completion clamped per call; `finish_reason` truncation detected and handled (chat note, summary retry-once at cap); chat history is compacted (oldest turns dropped; ADR-015)
 - Post-triage "Ask about this result" chat and the main "Ask AI" tab attach a read-only context block (post-triage only); chat transcripts are ephemeral
+- Summary card + chat bubbles render via `MarkdownLite` (real bullets, `**bold**`, `*italic*`, `` `code` ``); share/copy strips markdown (ADR-015)
 
 ## Key Design Decisions
 

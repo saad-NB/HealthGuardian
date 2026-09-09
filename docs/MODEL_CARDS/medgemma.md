@@ -17,9 +17,9 @@
 - **Role:** Tier 2 (optional enhancement)
 - **Mode:** Text-only in production (mmproj evaluated and dropped)
 - **Runtime:** fllama (wraps llama.cpp)
-- **Max tokens:** 512
+- **Max tokens:** dynamic (ADR-015) — summary completion `clamp(4096 − prompt − 384, 1024, 1536)`; chat completion `clamp(3072 − prompt − 192, 512, 1536)`; `finish_reason: "length"` triggers a summary retry-once at 1536 or a chat truncation note
 - **Temperature:** 0.1
-- **Context size:** 4096 (2048 when vision loaded)
+- **Context size:** 4096 summary / 3072 chat
 
 ## Input Format
 

@@ -39,12 +39,17 @@ class LlmService {
   /// [systemPrompt] overrides the default [systemMessage]; pass `null` to use
   /// the default. [history] carries prior turns as User/Assistant messages
   /// (never a system role) so multi-turn chat stays grounded.
+  ///
+  /// [onFinished] reports the final `finish_reason` reported by llama.cpp
+  /// (`"stop"`, `"length"`, `"tool_calls"` or `"unknown"`); `"length"` means
+  /// the reply hit its token cap and is truncated.
   Stream<String> chat(
     String prompt, {
     String? systemPrompt,
     List<Message>? history,
     Uint8List? imageBytes,
-    void Function(String fullOutput, int elapsedMs)? onFinished,
+    void Function(String fullOutput, int elapsedMs, String finishedReason)?
+        onFinished,
   }) async* {
     final controller = StreamController<String>();
 
@@ -88,7 +93,17 @@ class LlmService {
       }
       if (done) {
         sw.stop();
-        onFinished?.call(output.toString(), sw.elapsedMilliseconds);
+        if (response.length > lastLen) {
+          final rest = response.substring(lastLen);
+          lastLen = response.length;
+          output.write(rest);
+          controller.add(rest);
+        }
+        onFinished?.call(
+          output.toString(),
+          sw.elapsedMilliseconds,
+          parseFinishedReason(responseJson),
+        );
         if (!controller.isClosed) controller.close();
       }
     });
@@ -103,6 +118,28 @@ class LlmService {
     requestIdOfLastCall = requestId;
 
     yield* controller.stream;
+  }
+
+  /// Extracts the OpenAI-style `finish_reason` (`"stop"`, `"length"`,
+  /// `"tool_calls"`) from the stream chunk JSON fllama reports, or
+  /// `"unknown"` when it is absent/unparseable.
+  static String parseFinishedReason(String responseJson) {
+    if (responseJson.trim().isEmpty) return 'unknown';
+    try {
+      final root = jsonDecode(responseJson);
+      final choices = (root as Map<String, dynamic>)['choices'];
+      if (choices is List) {
+        for (final choice in choices) {
+          if (choice is Map<String, dynamic>) {
+            final reason = choice['finish_reason'];
+            if (reason is String && reason.isNotEmpty) return reason;
+          }
+        }
+      }
+    } catch (_) {
+      // fall through -> unknown
+    }
+    return 'unknown';
   }
 
   int? requestIdOfLastCall;

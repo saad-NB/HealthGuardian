@@ -1,8 +1,11 @@
 import 'package:fllama/fllama.dart' show Message, Role;
 import 'package:flutter/material.dart';
 
+import '../../prompts/tier2_prompts.dart';
 import '../../services/tier2_service.dart';
 import '../../state/app_state.dart';
+import '../../triage/inference_budget.dart';
+import '../text/markdown_lite.dart';
 import '../theme/app_tokens.dart';
 
 /// Chat surface for MedGemma (ADR-014). Used two ways:
@@ -32,10 +35,17 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatMessage {
-  const _ChatMessage({required this.fromUser, required this.text});
+  const _ChatMessage({
+    required this.fromUser,
+    required this.text,
+    this.isTruncated = false,
+  });
 
   final bool fromUser;
   final String text;
+
+  /// True when this is a notice that the previous reply hit its length limit.
+  final bool isTruncated;
 }
 
 class _ChatScreenState extends State<ChatScreen> {
@@ -46,6 +56,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final List<_ChatMessage> _messages = [];
   final List<Message> _history = [];
   bool _busy = false;
+  String _lastFinishReason = 'unknown';
 
   bool get _contextAttached => widget.patientContext != null && widget.patientContext!.isNotEmpty;
 
@@ -54,6 +65,14 @@ class _ChatScreenState extends State<ChatScreen> {
     _controller.dispose();
     _scroll.dispose();
     super.dispose();
+  }
+
+  void _startNewChat() {
+    setState(() {
+      _messages.clear();
+      _history.clear();
+      _lastFinishReason = 'unknown';
+    });
   }
 
   void _scrollToBottom() {
@@ -67,6 +86,19 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _send() async {
     final text = _controller.text.trim();
     if (text.isEmpty || _busy) return;
+
+    final systemPrompt = chatSystemPrompt(patientContext: widget.patientContext);
+
+    // Keep the prompt inside the chat budget: drop the oldest history turns
+    // (never the system prompt / attached triage context) until it fits.
+    var newPromptTokens = InferenceBudget.estimateTokens(text);
+    while (_history.isNotEmpty &&
+        InferenceBudget.chatPromptTokens(systemText: systemPrompt, history: _history) +
+                newPromptTokens >
+            InferenceBudget.chatPromptCap) {
+      _history.removeAt(0);
+      newPromptTokens = InferenceBudget.estimateTokens(text);
+    }
 
     final historyForTurn = List<Message>.of(_history);
     _history.add(Message(Role.user, text));
@@ -85,6 +117,7 @@ class _ChatScreenState extends State<ChatScreen> {
         prompt: text,
         patientContext: widget.patientContext,
         history: historyForTurn,
+        onFinished: (_, _, reason) => _lastFinishReason = reason,
       )) {
         buffer.write(delta);
         if (mounted) {
@@ -111,7 +144,19 @@ class _ChatScreenState extends State<ChatScreen> {
       } else {
         _history.removeLast();
       }
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          if (full.isNotEmpty && _lastFinishReason == 'length') {
+            _messages.add(const _ChatMessage(
+              fromUser: false,
+              text: '',
+              isTruncated: true,
+            ));
+          }
+        });
+      }
+      _lastFinishReason = 'unknown';
     }
   }
 
@@ -121,6 +166,17 @@ class _ChatScreenState extends State<ChatScreen> {
       appBar: AppBar(
         title: Text(_contextAttached ? 'Ask about this result' : 'Ask AI'),
         actions: [
+          if (_messages.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: _busy
+                  ? const SizedBox.shrink()
+                  : TextButton.icon(
+                      onPressed: _startNewChat,
+                      icon: const Icon(Icons.delete_outline, size: 18),
+                      label: const Text('New chat'),
+                    ),
+            ),
           if (_contextAttached)
             const Padding(
               padding: EdgeInsets.only(right: 12),
@@ -178,6 +234,21 @@ class _ChatScreenState extends State<ChatScreen> {
       itemCount: _messages.length,
       itemBuilder: (context, i) {
         final msg = _messages[i];
+        if (msg.isTruncated) {
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Reply reached its length limit — keep it short, or start a new chat.',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: AppColors.textSubdued, fontStyle: FontStyle.italic),
+              ),
+            ),
+          );
+        }
         final mine = msg.fromUser;
         return Align(
           alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
@@ -191,12 +262,27 @@ class _ChatScreenState extends State<ChatScreen> {
               color: mine ? Theme.of(context).colorScheme.primary : AppColors.surface,
               borderRadius: BorderRadius.circular(14),
             ),
-            child: SelectableText(
-              msg.text.isEmpty && !mine ? '…' : msg.text,
-              style: TextStyle(
-                fontSize: 15,
-                height: 1.4,
-                color: mine ? Theme.of(context).colorScheme.onPrimary : AppColors.textPrimary,
+            child: SelectableText.rich(
+              TextSpan(
+                style: TextStyle(
+                  fontSize: 15,
+                  height: 1.4,
+                  color: mine
+                      ? Theme.of(context).colorScheme.onPrimary
+                      : AppColors.textPrimary,
+                ),
+                children: msg.text.isEmpty && !mine
+                    ? const [TextSpan(text: '…')]
+                    : MarkdownLite.buildSpans(
+                        msg.text,
+                        style: TextStyle(
+                          fontSize: 15,
+                          height: 1.4,
+                          color: mine
+                              ? Theme.of(context).colorScheme.onPrimary
+                              : AppColors.textPrimary,
+                        ),
+                      ),
               ),
             ),
           ),

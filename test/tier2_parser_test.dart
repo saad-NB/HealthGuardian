@@ -55,9 +55,13 @@ void main() {
       expect(a.summary, '- nothing flagged');
     });
 
-    test('unbalanced braces fail closed', () {
-      final a = Tier2Parser.parse('{"triage_level":"P1"');
+    test('broken mid-string JSON fails closed but keeps raw', () {
+      final raw =
+          'thought\nThe vitals key was never closed: "triage_level": "';
+      final a = Tier2Parser.parse(raw);
       expect(a.hasSuggestion, isFalse);
+      expect(a.summary, isEmpty);
+      expect(a.rawOutput, raw);
     });
 
     test('nested strings with braces do not confuse the extractor', () {
@@ -70,6 +74,83 @@ void main() {
     test('default requires_human_verification is true', () {
       final a = Tier2Parser.parse('{"triage_level":"P1","summary":"- x"}');
       expect(a.requiresHumanVerification, isTrue);
+    });
+
+    test('literal newlines inside the summary string still decode', () {
+      final a = Tier2Parser.parse(
+        '{"triage_level": "P5", "summary": "- Stable vitals.\n'
+        '- Monitor closely.\n- Watch for worsening.", '
+        '"requires_human_verification": true}',
+      );
+      expect(a.suggestion, TriageTier.p5);
+      expect(a.summary, contains('Monitor closely'));
+      expect(a.summary, isNot(contains(r'\n')));
+    });
+
+    test('MedGemma thought block before the JSON is skipped', () {
+      final a = Tier2Parser.parse(
+        'thought\n'
+        'The patient is stable with no red flags.\n'
+        '{"triage_level": "p5", "summary": "- Nothing serious."}',
+      );
+      expect(a.suggestion, TriageTier.p5);
+      expect(a.summary, contains('Nothing serious'));
+    });
+
+    test('invalid JSON falls back to tolerant field extraction', () {
+      final a = Tier2Parser.parse(
+        'thought\nThe patient is fine.\n'
+        '"triage_level": "P4",\n'
+        '"summary": "- No danger signs.\n- Home care ok.",\n'
+        '"requires_human_verification": true',
+      );
+      expect(a.suggestion, TriageTier.p4);
+      expect(a.summary, contains('No danger signs'));
+      expect(a.hasSuggestion, isTrue);
+    });
+
+    test('raw output is preserved even when extraction fails', () {
+      final raw = 'thought\nNo JSON here at all.';
+      final a = Tier2Parser.parse(raw);
+      expect(a.hasSuggestion, isFalse);
+      expect(a.summary, isEmpty);
+      expect(a.rawOutput, raw);
+    });
+
+    test('skips a leading reasoning object and reads the real summary object',
+        () {
+      final raw =
+          '{"thought":"The patient looks P2 but let me be careful..."} '
+          '{"triage_level":"P5","summary":"- stable\\n- minor","requires_human_verification":false}';
+      final a = Tier2Parser.parse(raw);
+      expect(a.suggestion, TriageTier.p5);
+      expect(a.summary, contains('- stable'));
+      expect(a.requiresHumanVerification, isFalse);
+    });
+
+    test('multi-brace scan keeps going when the first block is invalid', () {
+      final raw =
+          '{"thought":"triage"} {"broken": [ } {"triage_level":"P3","summary":"- follow up"}';
+      final a = Tier2Parser.parse(raw);
+      expect(a.suggestion, TriageTier.p3);
+      expect(a.summary, contains('follow up'));
+    });
+
+    test('pure thought-only reply fails closed', () {
+      final raw = '{"thought":"Not a real summary."} trailing words';
+      final a = Tier2Parser.parse(raw);
+      expect(a.hasSuggestion, isFalse);
+      expect(a.summary, isEmpty);
+      expect(a.rawOutput, raw);
+    });
+
+    test('regex fallback ignores triage words inside a thought stanza', () {
+      final raw =
+          'Thought: I considered "triage_level": "P1" briefly, '
+          'but really it is minor. "triage_level": "p5", "summary": "- ok"';
+      final a = Tier2Parser.parse(raw);
+      expect(a.suggestion, TriageTier.p5);
+      expect(a.summary, '- ok');
     });
   });
 }

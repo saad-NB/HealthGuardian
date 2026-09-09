@@ -7,6 +7,7 @@ import '../../../triage/engine.dart';
 import '../../../triage/models.dart';
 import '../../../triage/tier2.dart';
 import '../../theme/app_tokens.dart';
+import '../../text/markdown_lite.dart';
 import '../../widgets/big_button.dart';
 import '../../widgets/review_banner.dart';
 import '../../widgets/tier_banner.dart';
@@ -110,7 +111,7 @@ class _ResultStepState extends State<ResultStep> {
         '',
         'AI analysis (MedGemma):',
         'Suggestion: ${_ai!.suggestion?.label ?? 'No change to Tier 1'}',
-        if (_ai!.summary.isNotEmpty) _ai!.summary,
+        if (_ai!.summary.isNotEmpty) MarkdownLite.stripMarkdown(_ai!.summary),
         'Clinician verification required.',
       ],
     ];
@@ -345,10 +346,24 @@ class _ResultStepState extends State<ResultStep> {
             ),
           ],
           const SizedBox(height: 12),
-          Text(
-            ai.summary.isEmpty ? 'No summary returned.' : ai.summary,
-            style: const TextStyle(fontSize: 15, height: 1.5),
+          Text.rich(
+            TextSpan(
+              children: MarkdownLite.buildSpans(
+                ai.summary.isEmpty ? 'No summary returned.' : ai.summary,
+                style: const TextStyle(fontSize: 15, height: 1.5),
+              ),
+            ),
           ),
+          if (ai.summary.isEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              'DEBUG (${ai.elapsedMs}ms) '
+              'attempts=${widget.tier2Service?.lastAttempts ?? ''} '
+              'err=${widget.tier2Service?.lastError}'
+              ' raw=${ai.rawOutput ?? ''}',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
           const SizedBox(height: 8),
           Text(
             'Clinician verification required. The AI is advisory — Tier 1 '

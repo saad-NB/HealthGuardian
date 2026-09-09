@@ -183,6 +183,15 @@ function Assert-Desc {
     Write-Host "    ok: '$Sub'"
 }
 
+function Assert-Absent {
+    param([string]$Sub)
+    $nodes = Read-XmlNodes
+    if (Find-Node $nodes $Sub) {
+        throw "Unexpected text present: '$Sub'"
+    }
+    Write-Host "    ok: absent '$Sub'"
+}
+
 function Assert-TierCode {
     $nodes = Read-XmlNodes
     foreach ($n in $nodes) {
@@ -393,6 +402,31 @@ $scenarios = @(
         @{ tap = 'Continue' }, # modifiers -> result, P5 bumps to P4
         @{ assert = 'P4 - Standard' },
         @{ assert = 'Age >65' }
+    )},
+    @{ Name = 'adultNormalMedGemmaTier2'; Steps = @(
+        @{ tap = 'Start Triage' },
+        @{ tap = '16 - 64 years' },
+        @{ tap = 'Continue' },
+        @{ tap = 'Continue' }, # rr
+        @{ tap = 'Continue' }, # spo2
+        @{ tap = 'Continue' }, # sbp
+        @{ tap = 'Continue' }, # hr
+        @{ tap = 'Continue' }, # temp
+        @{ tap = 'Continue' }, # onOxygen
+        @{ tap = 'Continue' }, # copd
+        @{ tap = 'Alert (A)' },
+        @{ tap = 'Continue' },
+        @{ tap = 'Chest pain' },
+        @{ tap = 'Continue' }, # probes, all No
+        @{ tap = 'Continue' }, # modifiers, no risk factors
+        @{ assert = 'P5 - Minor' },
+        @{ waitFor = 'Generate AI summary (Tier 2)'; timeout = 30 },
+        @{ tap = 'Generate AI summary (Tier 2)' },
+        @{ waitFor = 'AI analysis (MedGemma)'; timeout = 240 },
+        @{ assertAbsent = 'No summary returned.' },
+        @{ assertAbsent = 'Could not respond' },
+        @{ tap = 'Clinician verification required' },
+        @{ assert = 'Clinician verification required' }
     )}
 )
 
@@ -448,6 +482,11 @@ foreach ($sc in $selected) {
             elseif ($step.ContainsKey('type')) { Set-StepperValue $step.unit $step.value }
             elseif ($step.ContainsKey('rowTap')) { Tap-RowControl $step.rowTap $step.ctrl }
             elseif ($step.ContainsKey('assertTier')) { Assert-TierCode }
+            elseif ($step.ContainsKey('waitFor')) {
+                $timeout = if ($step.ContainsKey('timeout')) { $step.timeout } else { 120 }
+                Wait-Desc $step.waitFor $timeout
+            }
+            elseif ($step.ContainsKey('assertAbsent')) { Assert-Absent $step.assertAbsent }
             elseif ($step.ContainsKey('assert')) { Assert-Desc $step.assert }
             else { throw "Unknown step type at step $idx" }
         }

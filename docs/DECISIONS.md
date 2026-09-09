@@ -306,3 +306,43 @@ org.gradle.daemon=false
 - Strict prompts + `Tier2Parser` + merge invariant are unit-tested headless (Pillars A–D).
 - Roadmap item "GBNF grammar-constrained JSON output" is superseded by prompt-constrained JSON (documented above); revisit only if fllama adds grammar support.
 - Record version bumped to `2.1`; History shows an "AI ↑" indicator when the AI escalated.
+
+---
+
+## ADR-015: Tier 2 token budgets, truncation control, parser hardening, and markdown-lite rendering
+
+**Date:** 2026-09-10
+**Status:** Accepted
+
+**Context:** On-device verification of the MedGemma Tier 2 path surfaced four
+failure modes: (1) `fllama`'s `chat` callback only surfaced content deltas while
+`done == false`, and reported the **final cumulative response at `done`**, which
+we were dropping — replies could be silently empty; (2) a fixed `maxTokens` of
+512 truncated MedGemma's leading `thought | …` stanza before it ever emitted the
+JSON object → empty or partial replies, especially on cold start; (3) the
+tolerant parser stopped at the *first* brace-balanced object, so a visible
+reasoning block upstream of the real summary could win; (4) long multi-turn chat
+grew the prompt unboundedly until llama.cpp evicted context, cutting replies
+mid-sentence (`finish_reason: "length"`) with no user-facing signal.
+
+**Decision:**
+1. **Dynamic completion budgets (token estimate = `ceil(chars / 3.5)`).**
+   - Chat: fixed `contextSize` **3072**; `completion = clamp(3072 − promptEst − 192, 512, 1536)`; `chatPromptCap = 2368`.
+   - Summary: fixed `contextSize` **4096**; `completion = clamp(4096 − promptEst − 384, 1024, 1536)`.
+   All decisions live in `InferenceBudget` (single source of truth, unit-tested).
+2. **`finish_reason` parsed from fllama's OpenAI-style chunk JSON.** `LlmService.parseFinishedReason` reads `choices[0].finish_reason`; `onFinished` now reports `(fullOutput, elapsedMs, reason)`. Only a real `"length"` is treated as truncation.
+3. **Truncation behavior.** Chat: a "Reply reached its length limit" note is appended. Summary: the call **retries once at the max budget (1536)** when the reply is `length`-truncated, and also once on cold-start error/empty reply (a warm second attempt usually succeeds). Two failed attempts fail closed (ADR-014).
+4. **Chat history compaction (ephemeral, ADR-014).** Only the system prompt + attached triage context + the newest Q/A turns survive: while `promptTokens(system + history) + current prompt > chatPromptCap`, the *oldest* turns are dropped. Never the medical context.
+5. **Parser hardening.** Multi-brace scan — every brace-balanced block is tried in document order; a decodable block carrying a triage/summary key wins over reasoning-only (`{"thought": ...}`) blocks. Regex fallback uses the **last** key match and masks leading reasoning objects so thinking-stanza text can't steer the tier.
+6. **"Start new chat"** resets the ephemeral transcript/history in the chat UI.
+7. **Markdown-lite rendering (`MarkdownLite`).** Summary card + chat bubbles render real bullets (`- ` / `* ` / `1.` → `• `) and `**bold**` / `*italic*` / `` `code` `` without a markdown dependency; share/copy uses `stripMarkdown` so SMS text stays plain.
+
+**Alternatives considered:**
+1. **Static 1024 token cap.** Rejected: reasoning-heavy replies truncated; wasted the 4096 summary context.
+2. **Set `n_predict` to fill the context every turn.** Rejected: long-user prompts still got evicted; no signal to the user.
+3. **Full markdown package.** Rejected: unnecessary dependency for two block styles; lite renderer keeps the ~2.3 GB model footprint lean.
+
+**Consequences:**
+- Repeated **3× cold-start on-device Tier 2 scenario passes** (`adultNormalMedGemmaTier2`) and the full 9-scenario E2E harness is green with the model present.
+- Full headless suite (243 tests) green + `flutter analyze` clean.
+- `/storage/emulated/0/Android/data/com.healthguardian.healthguardian/files/models/medgemma-1.5-4b-it-Q4_K_M.gguf` (2,489,894,976 bytes) is the verified model paired with these prompts.

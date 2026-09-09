@@ -27,7 +27,19 @@ class Tier2Parser {
     if (raw.trim().isEmpty) return const Tier2Assessment();
 
     final decoded = _decodeFirstObject(raw);
-    if (decoded == null) return const Tier2Assessment();
+    if (decoded == null) {
+      // Strict JSON failed (e.g. unescaped newlines in the summary). Fall back
+      // to tolerant regex extraction; any miss fails closed but keeps the raw
+      // text so the reply is never silently lost. A leading visible "thought"
+      // stanza is masked so its text can't pollute the regex keys.
+      final safeRaw = _maskThoughtBlocks(raw);
+      return Tier2Assessment(
+        suggestion: _regexTier(safeRaw),
+        summary: _regexText(safeRaw, _summaryKeys) ?? '',
+        requiresHumanVerification: true,
+        rawOutput: raw,
+      );
+    }
 
     final suggestion = _parseTier(decoded);
     final summary = _summaryKeys
@@ -95,9 +107,16 @@ class Tier2Parser {
     return null;
   }
 
-  /// Extracts and decodes the first brace-balanced JSON object in [raw].
-  /// Returns null when no valid object can be found at the top level.
+  /// Finds and decodes the best brace-balanced JSON object in [raw].
+  ///
+  /// MedGemma may emit a visible `{"thought": ...}` stanza before the real
+  /// summary object, so this scans every balanced block in document order:
+  /// the first block that decodes *and* carries a triage key or a summary key
+  /// wins (skipping reasoning-only blocks); the first decodable block is kept
+  /// as a last resort so a pure-thought reply still fails closed gracefully.
+  /// Returns null when nothing decodes at all.
   static Map<String, dynamic>? _decodeFirstObject(String raw) {
+    Map<String, dynamic>? firstDecodable;
     var start = -1;
     for (var i = 0; i < raw.length; i++) {
       if (raw.codeUnitAt(i) == _open) {
@@ -140,12 +159,181 @@ class Tier2Parser {
     if (end < 0) return null;
 
     final block = raw.substring(start, end + 1);
+    Map<String, dynamic>? decoded;
     try {
-      final decoded = jsonDecode(block);
-      if (decoded is Map<String, dynamic>) return decoded;
-      if (decoded is Map) return Map<String, dynamic>.from(decoded);
+      final value = jsonDecode(_repairEscapes(block));
+      if (value is Map<String, dynamic>) decoded = value;
+      if (value is Map) decoded = Map<String, dynamic>.from(value);
     } catch (_) {
-      // fall through -> fail closed
+      // not a JSON object — keep scanning for a later block
+    }
+    if (decoded != null) {
+      firstDecodable ??= decoded;
+      // Reasoning-only blocks ({"thought": ...}) are skipped: keep scanning
+      // for the real summary object that follows them.
+      if (_hasTierOrSummaryKey(decoded)) return decoded;
+    }
+
+    // Multi-brace fallback: keep looking for a later object after this block.
+    final rest = _decodeFirstObject(raw.substring(end + 1));
+    return rest ?? firstDecodable;
+  }
+
+  static bool _hasTierOrSummaryKey(Map<String, dynamic> json) {
+    for (final key in _tierKeys) {
+      if (json.containsKey(key)) return true;
+    }
+    for (final key in _summaryKeys) {
+      if (json.containsKey(key)) return true;
+    }
+    return false;
+  }
+
+  /// Returns [raw] with any leading block that is a reasoning-only JSON object
+  /// (e.g. `{"thought": "..."}`) blanked out, so tolerant regex fallbacks don't
+  /// read triage-ish words from the model's visible reasoning.
+  static String _maskThoughtBlocks(String raw) {
+    var start = -1;
+    for (var i = 0; i < raw.length; i++) {
+      if (raw.codeUnitAt(i) == _open) {
+        start = i;
+        break;
+      }
+    }
+    if (start < 0) return raw;
+
+    var depth = 0;
+    var inString = false;
+    var escape = false;
+    var end = -1;
+    for (var i = start; i < raw.length; i++) {
+      final c = raw.codeUnitAt(i);
+      if (inString) {
+        if (escape) {
+          escape = false;
+        } else if (c == _escape) {
+          escape = true;
+        } else if (c == _quote) {
+          inString = false;
+        }
+        continue;
+      }
+      if (c == _quote) {
+        inString = true;
+        continue;
+      }
+      if (c == _open) {
+        depth++;
+      } else if (c == _close) {
+        depth--;
+        if (depth == 0) {
+          end = i;
+          i = raw.length;
+        }
+      }
+    }
+    if (end < 0) return raw;
+
+    Map<String, dynamic>? decodedValue;
+    try {
+      final value = jsonDecode(_repairEscapes(raw.substring(start, end + 1)));
+      if (value is Map<String, dynamic>) decodedValue = value;
+      if (value is Map) decodedValue = Map<String, dynamic>.from(value);
+    } catch (_) {
+      return raw;
+    }
+    if (decodedValue == null || _hasTierOrSummaryKey(decodedValue)) return raw;
+
+    // Blank the reasoning-only block (keeps offsets stable for regex).
+    final sb = StringBuffer();
+    for (var i = 0; i < raw.length; i++) {
+      sb.write(i >= start && i <= end ? ' ' : raw[i]);
+    }
+    return sb.toString();
+  }
+
+  /// Makes raw newlines/tabs inside string values valid JSON escapes
+  /// (MedGemma frequently emits literal line breaks inside `summary`).
+  static String _repairEscapes(String block) {
+    final sb = StringBuffer();
+    var inString = false;
+    var escape = false;
+    for (var i = 0; i < block.length; i++) {
+      final c = block[i];
+      if (inString) {
+        if (escape) {
+          sb.write(c);
+          escape = false;
+        } else if (c == r'\') {
+          sb.write(c);
+          escape = true;
+        } else if (c == '"') {
+          sb.write(c);
+          inString = false;
+        } else if (c == '\n' || c == '\r') {
+          sb.write(r'\n');
+        } else if (c == '\t') {
+          sb.write(r'\t');
+        } else {
+          sb.write(c);
+        }
+        continue;
+      }
+      if (c == '"') {
+        sb.write(c);
+        inString = true;
+      } else {
+        sb.write(c);
+      }
+    }
+    return sb.toString();
+  }
+
+  /// Last-resort field extraction from raw text when strict JSON decode fails.
+  /// Uses the *last* key match: any stray key in a visible reasoning stanza
+  /// precedes the final structured fragment the model must produce.
+  static String? _regexText(String raw, List<String> keys) {
+    for (final key in keys) {
+      final matches =
+          RegExp('"$key"\\s*:\\s*"([^"\\\\]|\\\\.)*"', caseSensitive: false)
+              .allMatches(raw);
+      Match? last;
+      for (final m in matches) {
+        last = m;
+      }
+      final m = last;
+      if (m != null) {
+        final full = m.group(0)!;
+        final open = full.indexOf('"', full.indexOf(':'));
+        final close = full.lastIndexOf('"');
+        if (open >= 0 && close > open) {
+          return full.substring(open + 1, close).trim();
+        }
+      }
+    }
+    return null;
+  }
+
+  static TriageTier? _regexTier(String raw) {
+    for (final key in _tierKeys) {
+      final matches =
+          RegExp('"$key"\\s*:\\s*"([^"\\\\]|\\\\.)*"', caseSensitive: false)
+              .allMatches(raw);
+      Match? last;
+      for (final m in matches) {
+        last = m;
+      }
+      final m = last;
+      if (m != null) {
+        final full = m.group(0)!;
+        final close = full.lastIndexOf('"');
+        final open = full.indexOf('"', full.indexOf(':'));
+        final value = open >= 0 && close > open
+            ? full.substring(open + 1, close)
+            : '';
+        final tier = _coerceTier(value);
+        if (tier != null) return tier;
+      }
     }
     return null;
   }
