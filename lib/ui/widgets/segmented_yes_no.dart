@@ -36,7 +36,7 @@ class SegmentedYesNo extends StatelessWidget {
       selected: selected,
       label: label,
       child: Material(
-        color: selected ? AppColors.teal700 : AppColors.surface,
+        color: selected ? AppColors.teal700 : AppColors.optionFill,
         borderRadius: BorderRadius.circular(14),
         child: InkWell(
           onTap: () => onChanged(test),
@@ -49,7 +49,7 @@ class SegmentedYesNo extends StatelessWidget {
               border: Border.all(
                 color: selected
                     ? AppColors.teal700
-                    : Colors.white.withValues(alpha: 0.12),
+                    : Colors.white.withValues(alpha: 0.20),
               ),
             ),
             child: Row(

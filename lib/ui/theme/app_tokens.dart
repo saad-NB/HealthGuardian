@@ -11,6 +11,10 @@ class AppColors {
 
   static const background = Color(0xFF121416);
   static const surface = Color(0xFF1D2125);
+
+  /// One shade lighter than [surface]: fills for option controls (Yes/No
+  /// segments) that sit on a [surface] card so they read as tappable buttons.
+  static const optionFill = Color(0xFF262C33);
   static const border = Color(0xFF333A40);
 
   static const textPrimary = Color(0xFFECF0F2);

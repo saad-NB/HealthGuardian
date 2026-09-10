@@ -70,13 +70,21 @@ function Read-XmlNodes {
 }
 
 function Find-Node {
-    param($Nodes, [string]$Sub)
+    param($Nodes, [string]$Sub, [switch]$ViewableOnly)
+    $viewable = {
+        param($n)
+        return $n.cx -gt 0 -and $n.cy -gt 0 -and $n.x2 -gt $n.x1 -and $n.y2 -gt $n.y1
+    }
     foreach ($n in $Nodes) {
-        if ($n.desc -eq $Sub) { return $n }
+        if ($n.desc -eq $Sub) {
+            if ($ViewableOnly -and -not (& $viewable $n)) { continue }
+            return $n
+        }
     }
     $best = $null
     foreach ($n in $Nodes) {
         if ($n.desc.Contains($Sub)) {
+            if ($ViewableOnly -and -not (& $viewable $n)) { continue }
             if (-not $best -or $n.desc.Length -lt $best.desc.Length) {
                 $best = $n
             }
@@ -87,6 +95,10 @@ function Find-Node {
 
 function Tap-Node {
     param($Node)
+    if (-not $Node -or $Node.cx -le 0 -or $Node.cy -le 0 -or
+        $Node.x2 -le $Node.x1 -or $Node.y2 -le $Node.y1) {
+        throw "Refusing to tap degenerate node bounds: '$($Node.desc)' @ $($Node.cx),$($Node.cy)"
+    }
     Write-Host "    tap '$($Node.desc -replace "[$nl]+", ' | ')' @ $($Node.cx),$($Node.cy)"
     Invoke-Adb shell input tap $($Node.cx) $($Node.cy) | Out-Null
     Start-Sleep -Milliseconds 800
@@ -101,7 +113,7 @@ function Tap-Scroll {
     $swipes = 0
     while ($true) {
         $nodes = Read-XmlNodes
-        $n = Find-Node $nodes $Sub
+        $n = Find-Node $nodes $Sub -ViewableOnly
         if ($n) { Tap-Node $n; return }
         if ($swipes -ge $MaxSwipes) {
             throw "Tap target not found after $MaxSwipes swipes: '$Sub'"
@@ -120,25 +132,41 @@ function Tap-Scroll {
 # into the dialog, and confirm with the Save button.
 function Set-StepperValue {
     param([string]$Unit, [string]$Digits)
-    $n = Find-Node (Read-XmlNodes) "$Unit, tap to edit"
-    if (-not $n) {
-        # fall back to any node whose desc ends with 'tap to edit'
-        $n = (Read-XmlNodes) | Where-Object { $_.desc -like '*tap to edit*' } |
-            Sort-Object { $_.desc.Length } | Select-Object -First 1
+    $lastError = $null
+    foreach ($attempt in 1..2) {
+        $nodes = Read-XmlNodes
+        $n = Find-Node $nodes "$Unit, tap to edit" -ViewableOnly
+        if (-not $n) {
+            # Missing-value steppers label themselves 'Enter value' with the
+            # unit shown as 'Not measured <unit>' (e.g. the age stepper).
+            $n = Find-Node $nodes "Not measured $Unit" -ViewableOnly
+        }
+        if (-not $n) {
+            # fall back to any viewable node whose desc ends with 'tap to edit'
+            $n = $nodes | Where-Object {
+                $_.desc -like '*tap to edit*' -and $_.cx -gt 0 -and $_.cy -gt 0
+            } | Sort-Object { $_.desc.Length } | Select-Object -First 1
+        }
+        if ($n) {
+            Tap-Node $n
+            # Clear the prefilled value (move to end, delete all, DEL for each digit).
+            Invoke-Adb shell input keyevent KEYCODE_MOVE_END | Out-Null
+            for ($i = 0; $i -lt 12; $i++) {
+                Invoke-Adb shell input keyevent KEYCODE_DEL | Out-Null
+            }
+            Start-Sleep -Milliseconds 400
+            Invoke-Adb shell input text $Digits | Out-Null
+            Start-Sleep -Milliseconds 600
+            $save = Find-Node (Read-XmlNodes) 'Save'
+            if (-not $save) { throw "Save button not found on value dialog" }
+            Tap-Node $save
+            return
+        }
+        $lastError = "Stepper value display not found for unit '$Unit'"
+        Invoke-Adb shell input swipe 540 1750 540 1050 300
+        Start-Sleep -Milliseconds 700
     }
-    if (-not $n) { throw "Stepper value display not found for unit '$Unit'" }
-    Tap-Node $n
-    # Clear the prefilled value (move to end, delete all, DEL for each digit).
-    Invoke-Adb shell input keyevent KEYCODE_MOVE_END | Out-Null
-    for ($i = 0; $i -lt 12; $i++) {
-        Invoke-Adb shell input keyevent KEYCODE_DEL | Out-Null
-    }
-    Start-Sleep -Milliseconds 400
-    Invoke-Adb shell input text $Digits | Out-Null
-    Start-Sleep -Milliseconds 600
-    $save = Find-Node (Read-XmlNodes) 'Save'
-    if (-not $save) { throw "Save button not found on value dialog" }
-    Tap-Node $save
+    throw $lastError
 }
 
 function Tap-RowControl {
@@ -146,7 +174,7 @@ function Tap-RowControl {
     $swipes = 0
     while ($true) {
         $nodes = Read-XmlNodes
-        $row = Find-Node $nodes $RowSub
+        $row = Find-Node $nodes $RowSub -ViewableOnly
         if (-not $row) {
             if ($swipes -ge $MaxSwipes) {
                 throw "Row not found after $MaxSwipes swipes: '$RowSub'"
@@ -158,19 +186,19 @@ function Tap-RowControl {
         }
         $best = $null
         foreach ($n in ($nodes | Where-Object { $_.desc.Contains($Ctrl) } | Sort-Object cy)) {
-            if ($n.cy -ge $row.y1) { $best = $n; break }
+            if ($n.cy -ge $row.y1 -and $n.cy -gt 0 -and $n.y2 -gt $n.y1) { $best = $n; break }
         }
-        if (-not $best) {
-            if ($swipes -ge $MaxSwipes) {
-                throw "Control '$Ctrl' not visible near row: '$RowSub'"
-            }
-            Invoke-Adb shell input swipe 540 1900 540 500 300
-            Start-Sleep -Milliseconds 700
-            $swipes++
-            continue
+        if ($best) {
+            Write-Host "  ROW '$RowSub' text y=$($row.y1)-$($row.y2) -> tapping '$($best.desc)' @ $($best.cx),$($best.cy) node y=$($best.y1)-$($best.y2)"
+            Tap-Node $best
+            return
         }
-        Tap-Node $best
-        return
+        if ($swipes -ge $MaxSwipes) {
+            throw "Control '$Ctrl' not visible near row: '$RowSub'"
+        }
+        Invoke-Adb shell input swipe 540 1900 540 500 300
+        Start-Sleep -Milliseconds 700
+        $swipes++
     }
 }
 
@@ -248,7 +276,8 @@ $scenarios = @(
     @{ Name = 'adultNormal'; Steps = @(
         @{ tap = 'Start Triage' },
         @{ tap = '16 - 64 years' },
-        @{ tap = 'Continue' },
+        @{ tap = 'Continue' }, # patient info -> danger gates
+        @{ tap = 'Continue' }, # danger -> rr
         @{ tap = 'Continue' }, # rr
         @{ tap = 'Continue' }, # spo2
         @{ tap = 'Continue' }, # sbp
@@ -257,9 +286,11 @@ $scenarios = @(
         @{ tap = 'Continue' }, # onOxygen
         @{ tap = 'Continue' }, # copd
         @{ tap = 'Alert (A)' },
-        @{ tap = 'Continue' },
+        @{ tap = 'Continue' }, # avpu -> complaint menu
         @{ tap = 'Chest pain' },
-        @{ tap = 'Continue' }, # probes, all No
+        @{ tap = 'Continue' }, # complaint menu -> chest probes, all No
+        @{ tap = 'Continue' }, # probes -> any other problems
+        @{ tap = 'No, that is all' },
         @{ tap = 'Continue' }, # modifiers, no risk factors
         @{ assert = 'P5 - Minor' },
         @{ assert = 'NEWS2 score' }
@@ -267,7 +298,8 @@ $scenarios = @(
     @{ Name = 'adultFeverGcsSepsis'; Steps = @(
         @{ tap = 'Start Triage' },
         @{ tap = '16 - 64 years' },
-        @{ tap = 'Continue' },
+        @{ tap = 'Continue' }, # patient info -> danger gates
+        @{ tap = 'Continue' }, # danger -> rr
         @{ tap = 'Continue' }, # rr
         @{ tap = 'Continue' }, # spo2
         @{ tap = 'Continue' }, # sbp
@@ -276,16 +308,20 @@ $scenarios = @(
         @{ tap = 'Continue' }, # onOxygen
         @{ tap = 'Continue' }, # copd
         @{ tap = 'Voice (V)' },
-        @{ tap = 'Continue' },
+        @{ tap = 'Continue' }, # avpu -> complaint menu
         @{ tap = 'Fever' },
+        @{ tap = 'Continue' }, # complaint menu -> GCS (Voice ≠ alert)
         @{ tap = 'Spontaneous' },
         @{ tap = 'Continue' },
         @{ tap = 'Oriented' },
         @{ tap = 'Continue' },
         @{ tap = 'Obeys' },
-        @{ tap = 'Continue' },
-        @{ tap = 'Continue' }, # fever probes, all No
+        @{ tap = 'Continue' }, # -> fever probes, all No
+        @{ tap = 'Continue' }, # probes -> any other problems
+        @{ tap = 'No, that is all' },
         @{ assert = 'Sepsis screening questions' },
+        @{ rowTap = 'suspected or confirmed infection'; ctrl = 'Yes' }, # F1
+        @{ rowTap = 'confused, drowsy, or not themselves'; ctrl = 'Yes' }, # F2 (qSOFA +1)
         @{ tap = 'Continue' }, # sepsis
         @{ tap = 'Continue' }, # modifiers
         @{ assert = 'NEWS2 score' },
@@ -296,10 +332,11 @@ $scenarios = @(
     @{ Name = 'toddlerPedsNews2CapRefill'; Steps = @(
         @{ tap = 'Start Triage' },
         @{ tap = '1 - 2 years' },
+        @{ tap = 'Continue' }, # patient info -> danger gates
+        @{ tap = 'Continue' }, # danger -> rr
+        @{ type = $true; unit = '/min'; value = '24' }, # toddler normal RR
         @{ tap = 'Continue' },
-        @{ tap = '24 /min' },  # toddler normal RR
-        @{ tap = 'Continue' },
-        @{ tap = '98 %' },     # SpO2
+        @{ type = $true; unit = '%'; value = '98' },    # SpO2
         @{ tap = 'Continue' },
         @{ type = $true; unit = 'bpm'; value = '110' }, # toddler normal HR (91-150)
         @{ tap = 'Continue' },
@@ -308,9 +345,11 @@ $scenarios = @(
         @{ tap = 'Continue' },
         @{ tap = 'Continue' }, # onOxygen -> No
         @{ tap = 'Alert (A)' },
-        @{ tap = 'Continue' },
+        @{ tap = 'Continue' }, # avpu -> complaint menu
         @{ tap = 'Chest pain' },
-        @{ tap = 'Continue' }, # chest probes, all No
+        @{ tap = 'Continue' }, # complaint menu -> chest probes, all No
+        @{ tap = 'Continue' }, # probes -> any other problems
+        @{ tap = 'No, that is all' },
         @{ tap = 'Continue' }, # modifiers (MUAC left default), no risk factors
         @{ assert = 'Peds-NEWS2 score' },
         @{ assert = 'Blood pressure not measured (optional for this age group).' },
@@ -319,7 +358,8 @@ $scenarios = @(
     @{ Name = 'newbornPewsFeedingReview'; Steps = @(
         @{ tap = 'Start Triage' },
         @{ tap = 'Less than 1 month old' },
-        @{ tap = 'Continue' },
+        @{ tap = 'Continue' }, # patient info -> danger gates
+        @{ tap = 'Continue' }, # danger -> rr
         @{ tap = 'Continue' }, # rr 48
         @{ tap = 'Continue' }, # spo2 97
         @{ tap = 'Continue' }, # hr 140
@@ -328,7 +368,9 @@ $scenarios = @(
         @{ tap = 'Continue' },
         @{ tap = 'Continue' }, # onOxygen -> No
         @{ tap = 'Fever' },
-        @{ tap = 'Continue' }, # fever probes, all No
+        @{ tap = 'Continue' }, # complaint menu -> fever probes, all No
+        @{ tap = 'Continue' }, # probes -> any other problems
+        @{ tap = 'No, that is all' },
         @{ assert = 'Sepsis screening questions' },
         @{ tap = 'Continue' }, # sepsis
         @{ tap = 'Continue' }, # modifiers (MUAC left default)
@@ -338,6 +380,7 @@ $scenarios = @(
     @{ Name = 'adultDangerP1'; Steps = @(
         @{ tap = 'Start Triage' },
         @{ tap = '16 - 64 years' },
+        @{ tap = 'Continue' }, # patient info -> danger gates
         @{ tap = 'Yes' },      # first danger row
         @{ swipe = 'up' },     # expanded row pushes Continue below the fold
         @{ tap = 'Continue' },
@@ -347,7 +390,8 @@ $scenarios = @(
     @{ Name = 'adultTearBackPainP1'; Steps = @(
         @{ tap = 'Start Triage' },
         @{ tap = '16 - 64 years' },
-        @{ tap = 'Continue' },
+        @{ tap = 'Continue' }, # patient info -> danger gates
+        @{ tap = 'Continue' }, # danger -> rr
         @{ tap = 'Continue' },
         @{ tap = 'Continue' },
         @{ tap = 'Continue' },
@@ -356,17 +400,20 @@ $scenarios = @(
         @{ tap = 'Continue' },
         @{ tap = 'Continue' },
         @{ tap = 'Alert (A)' },
-        @{ tap = 'Continue' },
+        @{ tap = 'Continue' }, # avpu -> complaint menu
         @{ tap = 'Chest pain' },
+        @{ tap = 'Continue' }, # complaint menu -> chest probes
         @{ rowTap = 'tearing pain'; ctrl = 'Yes' },
-        @{ tap = 'Continue' },
+        @{ tap = 'Continue' }, # probes -> any other problems
+        @{ tap = 'No, that is all' },
         @{ tap = 'Continue' }, # modifiers, no risk factors
         @{ assert = 'P1 - Emergency' }
     )},
     @{ Name = 'adultBurnP4'; Steps = @(
         @{ tap = 'Start Triage' },
         @{ tap = '16 - 64 years' },
-        @{ tap = 'Continue' },
+        @{ tap = 'Continue' }, # patient info -> danger gates
+        @{ tap = 'Continue' }, # danger -> rr
         @{ tap = 'Continue' }, # rr
         @{ tap = 'Continue' }, # spo2
         @{ tap = 'Continue' }, # sbp
@@ -375,8 +422,10 @@ $scenarios = @(
         @{ tap = 'Continue' }, # onOxygen
         @{ tap = 'Continue' }, # copd
         @{ tap = 'Alert (A)' },
-        @{ tap = 'Continue' },
+        @{ tap = 'Continue' }, # avpu -> complaint menu
         @{ tap = 'Wound or burn' },
+        @{ tap = 'Continue' }, # complaint menu -> any other problems
+        @{ tap = 'No, that is all' },
         @{ assert = 'Wound or burn details' },
         @{ tap = 'Front: Left upper arm' }, # shade region on the body figure
         @{ tap = 'Partial-thickness' },
@@ -386,8 +435,9 @@ $scenarios = @(
     )},
     @{ Name = 'adultModifierBumpP4'; Steps = @(
         @{ tap = 'Start Triage' },
-        @{ tap = 'Older adult' },
-        @{ tap = 'Continue' },
+        @{ type = $true; unit = 'y'; value = '70' }, # explicit age >= 65 (engine bump)
+        @{ tap = 'Continue' }, # patient info -> danger gates
+        @{ tap = 'Continue' }, # danger -> rr
         @{ tap = 'Continue' }, # rr
         @{ tap = 'Continue' }, # spo2
         @{ tap = 'Continue' }, # sbp
@@ -396,9 +446,10 @@ $scenarios = @(
         @{ tap = 'Continue' }, # onOxygen
         @{ tap = 'Continue' }, # copd
         @{ tap = 'Alert (A)' },
-        @{ tap = 'Continue' },
+        @{ tap = 'Continue' }, # avpu -> complaint menu
         @{ tap = 'Other problem' },
-        @{ tap = '70' },       # quick-value: explicit age >= 65 (engine bump)
+        @{ tap = 'Continue' }, # complaint menu -> any other problems
+        @{ tap = 'No, that is all' },
         @{ tap = 'Continue' }, # modifiers -> result, P5 bumps to P4
         @{ assert = 'P4 - Standard' },
         @{ assert = 'Age >65' }
@@ -406,7 +457,8 @@ $scenarios = @(
     @{ Name = 'adultNormalMedGemmaTier2'; Steps = @(
         @{ tap = 'Start Triage' },
         @{ tap = '16 - 64 years' },
-        @{ tap = 'Continue' },
+        @{ tap = 'Continue' }, # patient info -> danger gates
+        @{ tap = 'Continue' }, # danger -> rr
         @{ tap = 'Continue' }, # rr
         @{ tap = 'Continue' }, # spo2
         @{ tap = 'Continue' }, # sbp
@@ -415,9 +467,11 @@ $scenarios = @(
         @{ tap = 'Continue' }, # onOxygen
         @{ tap = 'Continue' }, # copd
         @{ tap = 'Alert (A)' },
-        @{ tap = 'Continue' },
+        @{ tap = 'Continue' }, # avpu -> complaint menu
         @{ tap = 'Chest pain' },
-        @{ tap = 'Continue' }, # probes, all No
+        @{ tap = 'Continue' }, # complaint menu -> chest probes, all No
+        @{ tap = 'Continue' }, # probes -> any other problems
+        @{ tap = 'No, that is all' },
         @{ tap = 'Continue' }, # modifiers, no risk factors
         @{ assert = 'P5 - Minor' },
         @{ waitFor = 'Generate AI summary (Tier 2)'; timeout = 30 },

@@ -223,7 +223,6 @@ class _BurnStepState extends State<BurnStep> {
       step: 1,
       decimals: value != value.roundToDouble() ? 1 : 0,
       unit: '%',
-      quickValues: const [1, 2, 5, 10],
       manualMin: 1,
       manualMax: 100,
     );

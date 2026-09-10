@@ -32,13 +32,14 @@ Output Layer -- triage result, SOAP-style summary, red flags, recommended action
 
 ### Tier 1 (Deterministic, Rule-Based)
 - **Always runs** -- the app is fully functional with Tier 1 alone
-- Inputs: vitals (SpO2, BP, HR, temp, RR), GCS assessment, burn questions, skin image
-- Outputs: `triage_level_base` (Emergency / Urgent / Routine), risk factors, red flags
+- Inputs: patient info (age/sex), vitals (SpO2, BP [adult optional for children], HR, temp, RR, cap refill, feeding), GCS assessment, chief complaint + additional complaints with scored probes, sepsis screen, burn questions, modifier answers
+- Scales by age: NEWS2 (16+), Peds-NEWS2 (per age bracket), PEWS (neonates); engine aggregates probe escalation across **all** answered complaints (ADR-016)
+- Outputs: `triage_level_base` (P1–P5), risk factors, red flags, escalation reasons
 - Latency target: < 1 second on any device
 - No network dependency
 
 ### Tier 2 (MedGemma LLM, Optional Enhancement)
-- Only runs if device has sufficient RAM (~4 GB free) and the GGUF is present (Models tab / adb)
+- Only runs if device has sufficient RAM (~4 GB free) and the GGUF is present (Settings → AI models / adb)
 - Inputs: structured Tier 1 payload (spec §16) — patient summary, vitals, GCS, complaint probes, sepsis screen, modifiers, Tier 1 result
 - Outputs: AI triage grade + 4–6 line summary (strict-JSON prompted; `Tier2Parser` fails closed on unparsable output)
 - Can only ESCALATE Tier 1, never downgrade: `triage_level_final = max(triage_level_base, tier2_suggestion)`
@@ -59,24 +60,41 @@ See `docs/DECISIONS.md` for full ADRs. Summary:
 
 ```
 lib/
-  main.dart                          App shell, NavigationBar + AppState
-  config/
-    clinical_thresholds.dart         All thresholds with inline citations
-  models/
-    medgemma_files.dart              GGUF metadata (filenames, sizes, HF URLs)
-  screens/
-    chat_screen.dart                 Chat UI vs MedGemma
-    files_screen.dart                Model-file download/verify UI
+  main.dart                          App entry; wires RootShell + AppState
+  config/clinical_thresholds.dart    Scale thresholds with inline citations
+  models/medgemma_files.dart         GGUF metadata (filenames, sizes, HF URLs)
+  prompts/tier2_prompts.dart         Tier 2 system/user prompt templates
+  screens/files_screen.dart          Model-file download/verify UI (hosted by Settings)
   services/
     llm_service.dart                 fllama OpenAI-style chat wrapper, streaming
     download_service.dart            Resumable model download w/ size checks
-  state/
-    app_state.dart                   Shared state (model paths, logs)
+    tier2_service.dart               Tier 2 orchestrator (prompt → LLM → parser → merge)
+  state/app_state.dart               Shared state (model paths, logs)
+  triage/
+    engine.dart                      Pure synchronous multi-scale Tier 1 engine
+    models.dart                      TriageAnswers, AgeGroup, scales, thresholds, records' inputs
+    probes.dart / danger_signs.dart / burn_profile.dart  Probe/question/burn definitions
+    record.dart / record_store.dart  TriageRecord (v2.1) + encrypted local store
+    tier2.dart / tier2_parser.dart   Tier 2 assessment types + tolerant fail-closed parser
+    inference_budget.dart            Token-budget single source of truth (ADR-015)
+  ui/
+    screens/
+      root_shell.dart                Bottom nav: Start / History / Settings + Ask AI session
+      start_screen.dart              New triage entry
+      history_screen.dart            Record list + detail card + Ask AI handoff
+      settings_screen.dart           Settings tab; hosts FilesScreen (model mgmt)
+      chat_screen.dart               Chat UI vs MedGemma (Ask AI session)
+      triage/                        Walkthrough steps (flow, complaints, probes, GCS,
+                                     vitals, danger, sepsis, burn, modifiers, result)
+    text/markdown_lite.dart          Bullet/bold/italic/code renderer (ADR-015)
+    theme/                           App theme + design tokens
+    widgets/                         Stepper tiles, segmented Yes/No, chips, banners, etc.
+scripts/device_e2e.ps1               adb harness: 9 on-device e2e scenarios (ADR-016)
 docs/
   ARCHITECTURE.md                    This file
   CLINICAL_SOURCES.md                Every scale/threshold with citation
   DECISIONS.md                       Architecture decision records
-  ROADMAP.md                         Out-of-scope items
+  ROADMAP.md                         Scope/deferred + milestone status
   MODEL_CARDS/                       Per-model training data and validation
 assets/
   samples/                           Sample clinical images for testing

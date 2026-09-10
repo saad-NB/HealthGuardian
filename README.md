@@ -10,11 +10,13 @@ Sehat Nigraan takes patient vitals, consciousness status (GCS), symptoms, medica
 
 - [x] Flutter project scaffolded (Android / iOS / Windows)
 - [x] fllama engine integrated for on-device MedGemma-1.5-4B inference
-- [x] Model file download/management UI
-- [x] Chat UI with streaming LLM output
+- [x] Model file download/management UI (under Settings)
+- [x] Chat UI with streaming LLM output ("Ask AI" + post-triage result chat)
 - [x] Clinical thresholds config with cited sources
-- [x] Unit tests for NEWS2 / GCS / burn / red-flag thresholds
-- [ ] Tier 1 rule engine (in progress)
+- [x] Unit + widget tests for every scale and flow (244 pass, `flutter analyze` clean)
+- [x] Tier 1 rule engine — multi-scale vitals (NEWS2 / Peds-NEWS2 / PEWS), complaint probes, GCS, sepsis qSOFA/pedSIRS, burn TBSA, danger gates, modifier bumps
+- [x] Tier 2 integration — MedGemma triage grade + summary, escalation-only merge (ADR-005), both-flags result display, Ask AI chat with dynamic token budgets
+- [x] Walkthrough UX — patient info first, multi-complaint loop, round-trip/edge-case verified on device (`adb` e2e harness, 9 on-device scenarios)
 
 ## Getting Started
 

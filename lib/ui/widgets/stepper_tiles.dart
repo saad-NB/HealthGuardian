@@ -4,8 +4,8 @@ import 'package:flutter/services.dart';
 import '../theme/app_tokens.dart';
 
 /// Large -- / value / ++ stepper with hold-to-repeat, bounds clamping,
-/// tap-the-value-to-type entry (digits only, hard-clamped), optional
-/// quick-value chips, and an explicit "Not available" escape.
+/// tap-the-value-to-type entry (digits only, hard-clamped), and an explicit
+/// "Not available" escape.
 class StepperTiles extends StatelessWidget {
   const StepperTiles({
     super.key,
@@ -16,7 +16,6 @@ class StepperTiles extends StatelessWidget {
     required this.step,
     required this.unit,
     this.decimals = 0,
-    this.quickValues = const [],
     this.canBeMissing = false,
     this.missing = false,
     this.onMissing,
@@ -28,13 +27,12 @@ class StepperTiles extends StatelessWidget {
   final double value;
   final ValueChanged<double> onChanged;
 
-  /// Stepper (button/quick-chip) bounds.
+  /// Stepper (button) bounds.
   final double min;
   final double max;
   final double step;
   final String unit;
   final int decimals;
-  final List<double> quickValues;
   final bool canBeMissing;
   final bool missing;
   final VoidCallback? onMissing;
@@ -61,27 +59,12 @@ class StepperTiles extends StatelessWidget {
         Row(
           children: [
             Expanded(child: _stepButton(context, false)),
+            const SizedBox(width: 12),
             Expanded(flex: 2, child: _valueDisplay(context)),
+            const SizedBox(width: 12),
             Expanded(child: _stepButton(context, true)),
           ],
         ),
-        if (quickValues.isNotEmpty) ...[
-          const SizedBox(height: 16),
-          Wrap(
-            spacing: AppMetrics.gap,
-            runSpacing: AppMetrics.gap,
-            alignment: WrapAlignment.center,
-            children: [
-              for (final q in quickValues)
-                ActionChip(
-                  label: Text(
-                      '${q == q.roundToDouble() ? q.toInt().toString() : q.toString()} $unit'),
-                  onPressed: () => onChanged(q),
-                  key: ValueKey('quick-$q'),
-                ),
-            ],
-          ),
-        ],
         if (canBeMissing) ...[
           const SizedBox(height: 16),
           TextButton.icon(
@@ -115,8 +98,7 @@ class StepperTiles extends StatelessWidget {
       button: true,
       label: missing ? 'Enter value' : 'Value $_display $unit, tap to edit',
       child: Material(
-        color: background,
-        borderRadius: BorderRadius.circular(14),
+        color: Colors.transparent,
         child: InkWell(
           key: const ValueKey('valueDisplay'),
           onTap: () => _promptNumberInput(context),
@@ -124,11 +106,10 @@ class StepperTiles extends StatelessWidget {
           child: Container(
             height: AppMetrics.minTouch + 16,
             alignment: Alignment.center,
-            margin: const EdgeInsets.symmetric(horizontal: AppMetrics.gap),
             decoration: BoxDecoration(
+              color: background,
               borderRadius: BorderRadius.circular(14),
-              border:
-                  Border.all(color: Colors.white.withValues(alpha: 0.18)),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.24)),
             ),
             child: Stack(
               alignment: Alignment.center,
@@ -182,8 +163,7 @@ class StepperTiles extends StatelessWidget {
       button: true,
       label: increment ? 'Increase' : 'Decrease',
       child: Material(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(14),
+        color: Colors.transparent,
         child: InkWell(
           onTap: () => _step(increment),
           borderRadius: BorderRadius.circular(14),
@@ -191,6 +171,7 @@ class StepperTiles extends StatelessWidget {
             height: AppMetrics.minTouch + 16,
             alignment: Alignment.center,
             decoration: BoxDecoration(
+              color: AppColors.surface,
               borderRadius: BorderRadius.circular(14),
               border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
             ),

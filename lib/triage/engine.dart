@@ -115,7 +115,7 @@ class TriageEngine {
     if (complaint.tier != null) {
       tier = tier.atMostUrgent(complaint.tier!);
       reasons.add(
-          'Complaint: ${a.chiefComplaint?.label ?? '?'} → ${complaint.tier!.label}');
+          'Complaint: ${complaint.label ?? '?'} → ${complaint.tier!.label}');
     }
 
     // === SEPSIS SCREEN (§9) ===
@@ -289,7 +289,9 @@ class TriageEngine {
 
   static Map<String, dynamic> _inputsSnapshot(TriageAnswers a) {
     return {
+      'patientName': a.patientName,
       'age': a.ageGroup?.name,
+      'ageYears': a.modifiers.ageYears,
       'vitals': {
         'rr': a.respiratoryRate,
         'spo2': a.spo2,
@@ -306,6 +308,9 @@ class TriageEngine {
       },
       'gcs': [a.gcsEye, a.gcsVerbal, a.gcsMotor],
       'complaint': a.chiefComplaint?.id,
+      'additionalComplaints':
+          a.additionalComplaints.map((c) => c.id).toList(),
+      'extraComplaintNotes': a.extraComplaintNotes,
       'probes': Map<String, bool>.from(a.probeAnswers),
       'burn': {
         'cause': a.burn.cause?.name,
@@ -806,58 +811,70 @@ class TriageEngine {
   // Chief complaint probing (§7/§8)
   // ---------------------------------------------------------------------
 
-  /// Returns the escalation tier (if any) from the complaint probe score.
+  /// Returns the most urgent escalation tier (if any) across every answered
+  /// complaint (primary + additional), plus the winning complaint's label.
   /// Unanswered probes do not count, so a missing probe never escalates.
-  static ({TriageTier? tier, int score}) _complaintTier(TriageAnswers a) {
-    final branch = a.chiefComplaint?.branch;
-    final questions = probeQuestions(branch);
-    if (questions.isEmpty) return (tier: null, score: 0);
+  static ({TriageTier? tier, int score, String? label}) _complaintTier(
+      TriageAnswers a) {
+    var best = (tier: null as TriageTier?, score: 0, label: null as String?);
 
-    var score = 0;
-    for (final q in questions) {
-      if (_probeConcerns(a, q)) score += q.score;
+    for (final complaint in a.answeredComplaints) {
+      final branch = complaint.branch;
+      final questions = probeQuestions(branch);
+      if (questions.isEmpty) continue;
+
+      var score = 0;
+      for (final q in questions) {
+        if (_probeConcerns(a, q)) score += q.score;
+      }
+
+      TriageTier? tier;
+      // E-C4: tearing back pain -> P1 regardless of any other score.
+      if (branch == ProbeBranch.chest && (a.probeAnswers['E-C4'] ?? false)) {
+        tier = TriageTier.p1;
+      } else {
+        tier = switch (branch) {
+          ProbeBranch.chest => score >= 6
+              ? TriageTier.p1
+              : score >= 4
+                  ? TriageTier.p2
+                  : null,
+          ProbeBranch.breathing => score >= 6
+              ? TriageTier.p1
+              : score >= 3
+                  ? TriageTier.p2
+                  : null,
+          ProbeBranch.fever => score >= 5
+              ? TriageTier.p1
+              : score >= 3
+                  ? TriageTier.p2
+                  : null,
+          ProbeBranch.headache => score >= 5
+              ? TriageTier.p1
+              : score >= 3
+                  ? TriageTier.p2
+                  : null,
+          ProbeBranch.abdo => score >= 5
+              ? TriageTier.p1
+              : score >= 3
+                  ? TriageTier.p2
+                  : null,
+          ProbeBranch.psych => score >= 6
+              ? TriageTier.p1
+              : score >= 3
+                  ? TriageTier.p2
+                  : null,
+          null => null,
+        };
+      }
+
+      if (tier != null &&
+          (best.tier == null || tier.urgencyIndex < best.tier!.urgencyIndex)) {
+        best = (tier: tier, score: score, label: complaint.label);
+      }
     }
 
-    // E-C4: tearing back pain -> P1 regardless of any other score.
-    if (branch == ProbeBranch.chest && (a.probeAnswers['E-C4'] ?? false)) {
-      return (tier: TriageTier.p1, score: score);
-    }
-
-    final TriageTier? tier = switch (branch) {
-      ProbeBranch.chest => score >= 6
-          ? TriageTier.p1
-          : score >= 4
-              ? TriageTier.p2
-              : null,
-      ProbeBranch.breathing => score >= 6
-          ? TriageTier.p1
-          : score >= 3
-              ? TriageTier.p2
-              : null,
-      ProbeBranch.fever => score >= 5
-          ? TriageTier.p1
-          : score >= 3
-              ? TriageTier.p2
-              : null,
-      ProbeBranch.headache => score >= 5
-          ? TriageTier.p1
-          : score >= 3
-              ? TriageTier.p2
-              : null,
-      ProbeBranch.abdo => score >= 5
-          ? TriageTier.p1
-          : score >= 3
-              ? TriageTier.p2
-              : null,
-      ProbeBranch.psych => score >= 6
-          ? TriageTier.p1
-          : score >= 3
-              ? TriageTier.p2
-              : null,
-      null => null,
-    };
-
-    return (tier: tier, score: score);
+    return best;
   }
 
   /// Whether a Yes (or, for inverted questions, a No) answer means "concern

@@ -19,18 +19,24 @@ Future<void> _selectAge(WidgetTester tester, String age) async {
     MaterialApp(theme: buildAppTheme(), home: const TriageFlowScreen()),
   );
   await _tap(tester, find.text(age));
+  await _tapContinue(tester); // confirm the patient info step
+}
+
+Future<void> _finishComplaint(WidgetTester tester) async {
+  await _tapContinue(tester); // complaint menu -> next round
+  await _tap(tester, find.text('No, that is all')); // no more complaints
 }
 
 void main() {
   group('New flow steps', () {
     testWidgets('chest complaint advances to probe questions', (tester) async {
       await _selectAge(tester, 'Adult');
-      await _tapContinue(tester);
-      for (var i = 0; i < 8; i++) {
+      for (var i = 0; i < 9; i++) {
         await _tapContinue(tester);
       }
 
       await _tap(tester, find.text('Chest pain'));
+      await _tapContinue(tester); // confirm the complaint menu
       expect(find.text('Questions about Chest pain'), findsOneWidget);
       expect(find.textContaining('spread to the arm'), findsOneWidget);
     });
@@ -38,8 +44,7 @@ void main() {
     testWidgets('toddler walkthrough includes capillary refill step',
         (tester) async {
       await _selectAge(tester, 'Toddler');
-      await _tapContinue(tester);
-      for (var i = 0; i < 4; i++) {
+      for (var i = 0; i < 5; i++) {
         await _tapContinue(tester);
       }
       expect(find.text('Capillary refill time'), findsOneWidget);
@@ -54,8 +59,7 @@ void main() {
     testWidgets('newborn walkthrough shows feeding step and no AVPU',
         (tester) async {
       await _selectAge(tester, 'Newborn');
-      await _tapContinue(tester);
-      for (var i = 0; i < 4; i++) {
+      for (var i = 0; i < 5; i++) {
         await _tapContinue(tester);
       }
       expect(find.text('How alert is the baby and how is it feeding?'),
@@ -67,31 +71,56 @@ void main() {
 
     testWidgets('fever complaint engages the sepsis screen', (tester) async {
       await _selectAge(tester, 'Adult');
-      await _tapContinue(tester);
-      for (var i = 0; i < 8; i++) {
+      for (var i = 0; i < 9; i++) {
         await _tapContinue(tester);
       }
       await _tap(tester, find.text('Fever'));
+      await _tapContinue(tester); // confirm the complaint menu
 
       expect(find.textContaining('39°C or higher'), findsOneWidget);
-      await _tapContinue(tester);
+      await _tapContinue(tester); // probes done
 
+      await _tap(tester, find.text('No, that is all'));
       expect(find.text('Sepsis screening questions'), findsOneWidget);
       expect(find.byKey(const ValueKey('sepsis-F1')), findsOneWidget);
+    });
+
+    testWidgets('sepsis F1+F2 Yes answers reach the engine (qSOFA 1 → P2)',
+        (tester) async {
+      await _selectAge(tester, 'Adult');
+      for (var i = 0; i < 9; i++) {
+        await _tapContinue(tester);
+      }
+      await _tap(tester, find.text('Fever'));
+      await _tapContinue(tester); // confirm the complaint menu
+      await _tapContinue(tester); // probes done
+      await _tap(tester, find.text('No, that is all'));
+
+      Finder segYes(String field) => find.descendant(
+            of: find.byKey(ValueKey('sepsis-$field')),
+            matching: find.text('Yes'),
+          );
+      await _tap(tester, segYes('F1'));
+      await _tap(tester, segYes('F2'));
+
+      await _tapContinue(tester); // sepsis -> modifiers
+      await _tapContinue(tester); // modifiers -> result
+      expect(find.textContaining('qSOFA 1'), findsOneWidget);
+      expect(find.textContaining('P2 - Very Urgent'), findsWidgets);
     });
   });
 
   group('GCS flow', () {
     testWidgets('AVPU alert skips GCS to land on complaint', (tester) async {
       await _selectAge(tester, 'Adult');
-      await _tapContinue(tester);
-      for (var i = 0; i < 8; i++) {
+      for (var i = 0; i < 9; i++) {
         await _tapContinue(tester);
       }
       // At complaint; GCS not indicated because AVPU stayed Alert.
       await _tap(tester, find.text('Other problem'));
       expect(find.text('Eye opening'), findsNothing);
-      // Advance past the modifiers step to reach the result.
+      // Confirm the menu, say no more complaints, advance to the result.
+      await _finishComplaint(tester);
       await _tapContinue(tester);
       expect(find.textContaining('NEWS2 score'), findsOneWidget);
     });
@@ -99,8 +128,7 @@ void main() {
     testWidgets('AVPU pain triggers the three GCS steps after complaint',
         (tester) async {
       await _selectAge(tester, 'Adult');
-      await _tapContinue(tester);
-      for (var i = 0; i < 7; i++) {
+      for (var i = 0; i < 8; i++) {
         await _tapContinue(tester);
       }
       // On avpu (last vital). Select 'Pain (P)'.
@@ -109,6 +137,7 @@ void main() {
 
       // Complaint step (comes before GCS in the node order).
       await _tap(tester, find.text('Headache'));
+      await _tapContinue(tester); // confirm the complaint menu
 
       // Now GCS eye step.
       expect(find.text('Eye opening'), findsOneWidget);
@@ -132,11 +161,12 @@ void main() {
     testWidgets('wound complaint opens the burn step and burns reach P4',
         (tester) async {
       await _selectAge(tester, 'Adult');
-      await _tapContinue(tester);
-      for (var i = 0; i < 8; i++) {
+      for (var i = 0; i < 9; i++) {
         await _tapContinue(tester);
       }
       await _tap(tester, find.text('Wound or burn'));
+      await _tapContinue(tester); // complaint menu -> any other problems
+      await _tap(tester, find.text('No, that is all')); // -> burn step
       expect(find.text('Wound or burn details'), findsOneWidget);
 
       // Small partial burn on the arm: shade it on the body figure.
@@ -150,17 +180,20 @@ void main() {
       expect(find.textContaining('P4'), findsOneWidget);
     });
 
-    testWidgets('modifier adult age 70 shows on the modifiers step',
+    testWidgets('modifier adult shows only the remaining modifiers',
         (tester) async {
       await _selectAge(tester, 'Adult');
-      await _tapContinue(tester);
-      for (var i = 0; i < 8; i++) {
+      for (var i = 0; i < 9; i++) {
         await _tapContinue(tester);
       }
       await _tap(tester, find.text('Other problem'));
+      await _finishComplaint(tester);
 
-      // Modifiers step: age stepper visible for NEWS2 adults.
-      expect(find.text('Age (if known, in years)'), findsOneWidget);
+      // Age + sex are captured on the patient info step, so the modifiers
+      // step only re-asks the remaining risk factors.
+      expect(find.text('Any extra risk factors?'), findsOneWidget);
+      expect(find.text('Biological sex (if relevant)'), findsNothing);
+      expect(find.text('Age (if known, in years)'), findsNothing);
       await _tapContinue(tester);
 
       expect(find.text('P5 - Minor'), findsOneWidget);

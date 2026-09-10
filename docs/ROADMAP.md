@@ -52,17 +52,17 @@ Items explicitly out of scope for the current MVP. These are intentionally visib
 - [x] fllama integration working
 - [x] MedGemma model loading and streaming
 - [x] Basic chat UI
-- [x] Model file download/management
-- [ ] Tier 1 rule engine implementation
-- [ ] GCS + NEWS2 scoring in Flutter
-- [ ] Burn TBSA guided UI
+- [x] Model file download/management (Settings → AI models)
+- [x] Tier 1 rule engine implementation
+- [x] GCS + NEWS2 scoring in Flutter (multi-scale: NEWS2 / Peds-NEWS2 / PEWS)
+- [x] Burn TBSA guided UI
 
 ### v0.2.0 - Tier 1 Complete
-- [ ] Decision table implementation
-- [ ] Hard red-flag override layer
-- [ ] Clinical threshold config with citations
-- [ ] Boundary-value unit tests (100% branch coverage)
-- [ ] Vignette test suite
+- [x] Decision table implementation (P1–P5 mapping, per-scale)
+- [x] Hard red-flag override layer (danger gates + single-parameter escalation)
+- [x] Clinical threshold config with citations
+- [x] Boundary-value unit tests (reference-table driven, 244-test suite)
+- [ ] Vignette test suite (`/test/fixtures/vignettes/`) — backlog
 
 ### v0.3.0 - Skin Classifier
 - [ ] MobileNetV3-Large training pipeline
@@ -76,12 +76,13 @@ Items explicitly out of scope for the current MVP. These are intentionally visib
 - [x] Max() merge rule implementation (escalation-only, enforced in `Tier2Assessment.merge`)
 - [x] Invariant tests
 - [x] Result screen: both-flags display (Tier 1 first, then AI flag + description) + AI summary card
-- [x] Post-triage context chat + main "Ask AI" tab
+- [x] Post-triage context chat + Ask AI session (ephemeral; dynamic token budgets — ADR-015)
 - [x] Record v2.1 additive `tier2` block (tolerant `fromJson`, legacy v2.0 loads)
 
 ### v1.0.0 - MVP Release
 - [ ] Voice input/output (STT/TTS)
-- [ ] Multilingual support (Urdu primary)
-- [ ] Patient session history (SQLite)
-- [ ] Full test suite passing
-- [ ] Performance validated on target hardware
+- [x] Multilingual structure ready (locale-aware shell); Urdu copy — backlog
+- [x] Patient session history (detail card + Ask AI handoff; encrypted local store, not SQLite)
+- [x] Full test suite passing (244 tests + `flutter analyze` clean)
+- [x] Device-tested on Android (Vivo V2061, 9-scenario adb e2e harness)
+- [ ] Performance validated on low-spec target hardware — backlog

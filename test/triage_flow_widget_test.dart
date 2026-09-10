@@ -29,11 +29,28 @@ Future<void> _goToDangerSigns(WidgetTester tester) async {
   await tester.pumpAndSettle();
   await tester.tap(find.text('Adult'));
   await tester.pumpAndSettle();
+  await _tapContinue(tester); // confirm the patient info step
 }
 
 Future<void> _goToVitals(WidgetTester tester) async {
   await _goToDangerSigns(tester);
   await _tapContinue(tester);
+}
+
+/// Selects a complaint then walks through: menu Continue + "no more
+/// problems", landing wherever the walkthrough goes next.
+Future<void> _selectComplaint(WidgetTester tester, String complaint) async {
+  await tester.ensureVisible(find.text(complaint));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text(complaint));
+  await tester.pumpAndSettle();
+  await _tapContinue(tester);
+  if (find.text('No, that is all').evaluate().isNotEmpty) {
+    await tester.ensureVisible(find.text('No, that is all'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('No, that is all'));
+    await tester.pumpAndSettle();
+  }
 }
 
 void main() {
@@ -78,11 +95,8 @@ void main() {
       // Now at avpu (8th vital). Continue goes to complaint step.
       await _tapContinue(tester);
 
-      // Complaint step: tap "Other problem" to advance.
-      await tester.ensureVisible(find.text('Other problem'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Other problem'));
-      await tester.pumpAndSettle();
+      // Complaint step: pick "Other problem" then close the round.
+      await _selectComplaint(tester, 'Other problem');
 
       // Modifiers step: advance past it (no risk factors selected).
       await _tapContinue(tester);
@@ -109,11 +123,8 @@ void main() {
         await _tapContinue(tester);
       }
 
-      // Complaint step: tap "Other problem"
-      await tester.ensureVisible(find.text('Other problem'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Other problem'));
-      await tester.pumpAndSettle();
+      // Complaint step: pick "Other problem" then close the round.
+      await _selectComplaint(tester, 'Other problem');
 
       // Missing SpO2 engages the sepsis screen; Continue through it.
       await _tapContinue(tester);
@@ -197,8 +208,8 @@ void main() {
       final yes = find.descendant(of: firstRow, matching: find.text('Yes'));
       final no = find.descendant(of: firstRow, matching: find.text('No'));
 
-      expect(segmentColor(tester, yes), AppColors.surface);
-      expect(segmentColor(tester, no), AppColors.surface);
+      expect(segmentColor(tester, yes), AppColors.optionFill);
+      expect(segmentColor(tester, no), AppColors.optionFill);
 
       await tester.ensureVisible(no);
       await tester.pumpAndSettle();
@@ -206,7 +217,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(segmentColor(tester, no), AppColors.teal700);
-      expect(segmentColor(tester, yes), AppColors.surface);
+      expect(segmentColor(tester, yes), AppColors.optionFill);
       expect(find.text('Does the patient have ANY of these right now?'),
           findsOneWidget);
     });
@@ -221,19 +232,19 @@ void main() {
 
     testWidgets('null value colors no segment', (tester) async {
       await tester.pumpWidget(app());
-      expect(segmentColor(tester, find.text('Yes')), AppColors.surface);
-      expect(segmentColor(tester, find.text('No')), AppColors.surface);
+      expect(segmentColor(tester, find.text('Yes')), AppColors.optionFill);
+      expect(segmentColor(tester, find.text('No')), AppColors.optionFill);
     });
 
     testWidgets('true colors Yes only', (tester) async {
       await tester.pumpWidget(app(value: true));
       expect(segmentColor(tester, find.text('Yes')), AppColors.teal700);
-      expect(segmentColor(tester, find.text('No')), AppColors.surface);
+      expect(segmentColor(tester, find.text('No')), AppColors.optionFill);
     });
 
     testWidgets('false colors No only', (tester) async {
       await tester.pumpWidget(app(value: false));
-      expect(segmentColor(tester, find.text('Yes')), AppColors.surface);
+      expect(segmentColor(tester, find.text('Yes')), AppColors.optionFill);
       expect(segmentColor(tester, find.text('No')), AppColors.teal700);
     });
   });

@@ -68,9 +68,10 @@ class ModifiersStep extends StatelessWidget {
           const SizedBox(height: 20),
 
           // I1 — age (explicit, overrides the bracket for the engine bump).
-          // Only meaningful on the NEWS2 track: children/neonates already
-          // pick an age-bracketed peds scale (ADR-013), so no extra bump.
-          if (answers.ageGroup?.scale == VitalScale.news2) ...[
+          // Only meaningful on the NEWS2 track, and only shown when the age
+          // was not already captured on the first step.
+          if (answers.ageGroup?.scale == VitalScale.news2 &&
+              !answers.modifiers.ageAnswered) ...[
             _title(context, 'Age (if known, in years)'),
             StepperTiles(
               value: (answers.modifiers.ageYears ?? 30).toDouble(),
@@ -82,7 +83,6 @@ class ModifiersStep extends StatelessWidget {
               max: 120,
               step: 1,
               unit: 'y',
-              quickValues: const [65, 70, 85],
               canBeMissing: true,
               missing: answers.modifiers.ageYears == null,
               onMissing: () {
@@ -97,28 +97,34 @@ class ModifiersStep extends StatelessWidget {
             const SizedBox(height: 16),
           ],
 
-          // I2 — sex (only gates pregnancy).
-          _title(context, 'Biological sex (if relevant)'),
-          for (final s in const [('male', 'Male'), ('female', 'Female')]) ...[
-            AnswerChip(
-              label: s.$2,
-              icon: s.$1 == 'male' ? Icons.male : Icons.female,
-              selected: answers.modifiers.sex == s.$1,
-              onSelected: () {
-                answers.modifiers.sex = s.$1;
-                onRefresh();
-              },
-            ),
-            const SizedBox(height: AppMetrics.answerGap),
-          ],
-          if (answers.modifiers.sex == null) ...[
-            TextButton(
-              onPressed: () {
-                answers.modifiers.sex = 'female';
-                onRefresh();
-              },
-              child: const Text('Prefer not to say / skip'),
-            ),
+          // I2 — sex (only gates pregnancy). Shown only when the sex was not
+          // captured on the first step.
+          if (!answers.modifiers.sexAnswered) ...[
+            _title(context, 'Biological sex (if relevant)'),
+            for (final s in const [
+              ('male', 'Male'),
+              ('female', 'Female')
+            ]) ...[
+              AnswerChip(
+                label: s.$2,
+                icon: s.$1 == 'male' ? Icons.male : Icons.female,
+                selected: answers.modifiers.sex == s.$1,
+                onSelected: () {
+                  answers.modifiers.sex = s.$1;
+                  onRefresh();
+                },
+              ),
+              const SizedBox(height: AppMetrics.answerGap),
+            ],
+            if (answers.modifiers.sex == null) ...[
+              TextButton(
+                onPressed: () {
+                  answers.modifiers.sex = 'female';
+                  onRefresh();
+                },
+                child: const Text('Prefer not to say / skip'),
+              ),
+            ],
           ],
 
           // I3 — pregnancy (only when sex is female).
@@ -159,7 +165,6 @@ class ModifiersStep extends StatelessWidget {
               step: 0.5,
               decimals: 1,
               unit: 'cm',
-              quickValues: const [11.5, 12.5, 13.5],
               manualMin: 1,
               manualMax: 40,
             ),

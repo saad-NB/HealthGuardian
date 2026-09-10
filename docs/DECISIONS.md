@@ -346,3 +346,26 @@ mid-sentence (`finish_reason: "length"`) with no user-facing signal.
 - Repeated **3× cold-start on-device Tier 2 scenario passes** (`adultNormalMedGemmaTier2`) and the full 9-scenario E2E harness is green with the model present.
 - Full headless suite (243 tests) green + `flutter analyze` clean.
 - `/storage/emulated/0/Android/data/com.healthguardian.healthguardian/files/models/medgemma-1.5-4b-it-Q4_K_M.gguf` (2,489,894,976 bytes) is the verified model paired with these prompts.
+
+---
+
+## ADR-016: Patient-first walkthrough, engine complaint aggregation, sepsis fail-closed, and the Settings/History/Ask-AI shell
+
+**Date:** 2026-09-11
+**Status:** Accepted
+
+**Context:** On-device e2e (via the adb harness) surfaced UX and correctness gaps after Tier 2 hardening: (1) the walkthrough started on complaint selection and asked age/sex later in the modifiers step, so vulnerable-age modifier bumps (e.g. `Age >65`) were easy to miss; (2) only the single chief complaint branch fed scored probes, so additional complaints were invisible to the engine; (3) the sepsis F-screen was effectively broken on device — rows passed uppercase field ids (`F1`…) into a switch with lowercase cases (`f1`…), so every tap was a silent no-op and qSOFA could never trigger; (4) flow navigation was index-based, which let a chip tap auto-advance and skip nodes; (5) the Models tab dominated the bottom navigation for family users.
+
+**Decisions:**
+1. **Patient info first.** Age (stepper with typed values) and sex are collected at the start of the walkthrough. The modifiers step (`I1` age / `I2` sex) renders only when a field was **not** answered at the start (`ModifierAnswers.ageAnswered` / `sexAnswered`), so the vulnerable-age bump is presented instead of re-asked. The age-bracket chip no longer auto-advances; the flow advances on an explicit Continue via **identity-based** `_next()` (type + field match on `_shownNode`/`_sameNode`), which fixed skipped/clipped nodes (e.g. the toddler age chip reporting `@ 0,0`).
+2. **Engine complaint aggregation (primary + additional).** `chiefComplaint` stays the primary (engine-payload/branch compat); `additionalComplaints` and `activeComplaint` drive the probe screens and the "More problems?" round-robin loop. The engine escalates from **every** answered complaint — most-urgent branch tier wins and its label is recorded — and unanswered probes never escalate.
+3. **Sepsis fail-closed.** The F-screen no longer pre-fills answers; every row starts un-answered and the engine treats `null` as **"No"**. qSOFA is computed only from the answered rows (`F2`+`F3`+`F4`). Fixed the silent no-op bug (uppercase switch cases + regression test `sepsis F1+F2 Yes answers reach the engine`).
+4. **Widget cleanup.** Removed stepper quick-value rows; unified stepper tile semantics so a value-less stepper labels itself (`Not measured <unit>`, e.g. the age stepper → `Not measured y`); Yes/No segmented control contrast improved (selected teal on selected fill vs dark unselected) — verified by pixel-sampling in e2e.
+5. **Settings tab replaces Models.** Bottom navigation is now **Start / History / Settings** plus the **Ask AI** session carried by the shell; model management (`FilesScreen`) moved under Settings so family users never land on it accidentally.
+6. **Richer History + Ask AI handoff.** History detail card shows vitals chips, complaints, escalation reasons, missing params, the AI summary + `AI ↑` indicator, and an **Ask AI** button that opens a per-record context chat (ephemeral, ADR-014).
+7. **e2e harness hardening.** `Find-Node -ViewableOnly` resolution, degenerate-bounds tap guards, and a `Not measured <unit>` fallback so off-screen/missing-value steppers are skipped or typed safely.
+
+**Consequences:**
+- All 9 on-device scenarios pass; the sepsis qSOFA path (`qSOFA 1 → P2`), modifier bump (`Age >65` → P4), and Tier 2 (`adultNormalMedGemmaTier2`) are regression-verified against the device.
+- Full suite is now **244 tests** green + `flutter analyze` clean.
+- `extraComplaintNotes` free text flows only to the Tier 2 payload/context block — never the deterministic engine.

@@ -187,7 +187,6 @@ class VitalsStep extends StatelessWidget {
       max: 60,
       step: 1,
       unit: '/min',
-      quickValues: _neonatal ? const [30, 45, 60] : const [12, 16, 20, 24],
       manualMax: 200,
     );
   }
@@ -205,7 +204,6 @@ class VitalsStep extends StatelessWidget {
       max: 100,
       step: 1,
       unit: '%',
-      quickValues: const [92, 95, 98],
       canBeMissing: true,
       missing: missing,
       manualMin: 1,
@@ -233,7 +231,6 @@ class VitalsStep extends StatelessWidget {
       max: 260,
       step: 5,
       unit: 'mmHg',
-      quickValues: _neonatal ? const [70, 80, 90] : const [100, 120, 140],
       manualMin: 20,
       manualMax: 400,
     );
@@ -249,7 +246,6 @@ class VitalsStep extends StatelessWidget {
       max: 220,
       step: 1,
       unit: 'bpm',
-      quickValues: _neonatal ? const [120, 140, 160] : const [60, 72, 90],
       manualMin: 1,
       manualMax: 600,
     );
@@ -269,7 +265,6 @@ class VitalsStep extends StatelessWidget {
       step: 0.1,
       decimals: 1,
       unit: '°C',
-      quickValues: const [36.0, 37.0, 38.0],
       canBeMissing: true,
       missing: missing,
       manualMin: 25.0,

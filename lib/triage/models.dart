@@ -62,6 +62,21 @@ enum AgeGroup {
 
   /// True for 65+ (feeds the §21.6 temperature-concern list).
   bool get isOlderAdult => this == olderAdult;
+
+  /// Maps an exact age in full years to the closest [AgeGroup] bracket.
+  /// Sub-year ages collapse to [neonate]; the chip grid stays available for
+  /// manual correction.
+  static AgeGroup? fromYears(int? years) {
+    if (years == null) return null;
+    if (years >= 65) return AgeGroup.olderAdult;
+    if (years >= 16) return AgeGroup.adult;
+    if (years >= 12) return AgeGroup.teenager;
+    if (years >= 8) return AgeGroup.preteen;
+    if (years >= 5) return AgeGroup.schoolAge;
+    if (years >= 3) return AgeGroup.preschool;
+    if (years >= 1) return AgeGroup.toddler;
+    return AgeGroup.neonate;
+  }
 }
 
 /// AVPU consciousness level (Section B7).
@@ -369,8 +384,16 @@ class ModifierAnswers {
   /// I1 — age in full years (falls back to [AgeGroup] when null).
   int? ageYears;
 
+  /// I1 was asked up-front (patient info step), so the modifiers screen must
+  /// not re-ask even when the exact age is unknown.
+  bool ageAnswered = false;
+
   /// I2 — biological sex.
   String? sex; // 'male' | 'female' | null
+
+  /// I2 was asked up-front (patient info step), so the modifiers screen must
+  /// not re-ask even when the patient prefers not to say.
+  bool sexAnswered = false;
 
   /// I3 — pregnancy (only meaningful together with sex == 'female').
   bool? pregnant;
@@ -395,7 +418,9 @@ class ModifierAnswers {
 
   void reset() {
     ageYears = null;
+    ageAnswered = false;
     sex = null;
+    sexAnswered = false;
     pregnant = null;
     immunocompromised = null;
     muacCm = null;
@@ -533,6 +558,45 @@ class TriageAnswers {
   /// Section D1 chief complaint (§7).
   ChiefComplaint? chiefComplaint;
 
+  /// Additional complaints selected on the main-problem menu. The first
+  /// selection remains [chiefComplaint] (primary, drives GCS/result display);
+  /// each extra complaint's probes are scored independently and aggregated.
+  final List<ChiefComplaint> additionalComplaints = [];
+
+  /// The complaint currently being worked through (probes). Null once the
+  /// complaint round is confirmed with Continue.
+  ChiefComplaint? activeComplaint;
+
+  /// Optional patient name/identifier captured on the first step (used to
+  /// label history entries and chart context, never sent to the model).
+  String? patientName;
+
+  /// Free-text "any other complaints" typed on the complaint menu. Goes only
+  /// to the Tier 2 context (MedGemma), never the Tier 1 engine.
+  String extraComplaintNotes = '';
+
+  /// All complaints the user has selected: primary first, then the extras.
+  List<ChiefComplaint> get answeredComplaints => [
+        ?chiefComplaint,
+        ...additionalComplaints,
+      ];
+
+  bool hasComplaint(ChiefComplaint c) =>
+      chiefComplaint == c || additionalComplaints.contains(c);
+
+  /// Marks [c] answered (first selection becomes the primary) and makes it
+  /// the active complaint for probing.
+  void selectComplaint(ChiefComplaint c) {
+    if (!hasComplaint(c)) {
+      if (chiefComplaint == null) {
+        chiefComplaint = c;
+      } else {
+        additionalComplaints.add(c);
+      }
+    }
+    activeComplaint = c;
+  }
+
   /// Section E answered probes: probe id -> Yes/No (§8).
   final Map<String, bool> probeAnswers = {};
 
@@ -565,6 +629,10 @@ class TriageAnswers {
     gcsVerbal = null;
     gcsMotor = null;
     chiefComplaint = null;
+    additionalComplaints.clear();
+    activeComplaint = null;
+    patientName = null;
+    extraComplaintNotes = '';
     probeAnswers.clear();
     sepsis.reset();
     burn.reset();

@@ -169,4 +169,102 @@ class TriageRecord {
           : null,
     );
   }
+
+  /// Patient name/identifier captured at the start of the walkthrough, if any.
+  String get patientName =>
+      (inputs['patientName'] as String?)?.trim() ?? '';
+}
+
+/// Rebuilds a readable (non-JSON) context string for the Ask-AI chat when it
+/// is opened from an existing History record. Mirrors [Tier2Payload]'s
+/// `patientSummary` but is sourced from the stored snapshot, so a finished
+/// record can be discussed even without the original [TriageAnswers].
+///
+/// The patient name is deliberately excluded: it labels the chat title, never
+/// the model context.
+String buildRecordContext(TriageRecord r) {
+  final inputs = r.inputs;
+  final b = StringBuffer()
+    ..writeln('TRIAGE RECORD CONTEXT (decision support - not a diagnosis)');
+
+  final ageName = inputs['age'] as String?;
+  for (final g in AgeGroup.values) {
+    if (g.name == ageName) {
+      b.writeln('Age group: ${g.label}');
+      break;
+    }
+  }
+  b.writeln('Triage on: ${r.timestamp.toLocal().toString()}');
+
+  final vitals = (inputs['vitals'] as Map?) ?? const {};
+  final v = <String>[
+    if (vitals['rr'] != null) 'RR ${vitals['rr']}/min',
+    if (vitals['spo2'] != null)
+      'SpO2 ${vitals['spo2']}%'
+    else if (vitals['spo2Missing'] == true)
+      'SpO2 not available',
+    if (vitals['sbp'] != null) 'BP ${vitals['sbp']}',
+    if (vitals['hr'] != null) 'HR ${vitals['hr']}/min',
+    if (vitals['temp'] != null)
+      'Temp ${vitals['temp']}C'
+    else if (vitals['tempMissing'] == true)
+      'Temp not available',
+    if (vitals['consciousness'] != null)
+      'AVPU ${vitals['consciousness']}',
+    if (vitals['capillaryRefill'] != null)
+      'Cap refill ${vitals['capillaryRefill']}',
+    if (vitals['neonatalConsciousness'] != null)
+      'Neonatal state ${vitals['neonatalConsciousness']}',
+    if (vitals['onOxygen'] == true) 'On oxygen',
+  ];
+  if (v.isNotEmpty) b.writeln('Vitals: ${v.join(', ')}');
+
+  final gcs = inputs['gcs'];
+  if (gcs is List && gcs.length == 3 && gcs.every((x) => x is int)) {
+    final eye = gcs[0] as int, verbal = gcs[1] as int, motor = gcs[2] as int;
+    b.writeln('GCS: ${eye + verbal + motor}/15 (E$eye V$verbal M$motor)');
+  }
+
+  final complaints = <String>[
+    if (inputs['complaint'] is String) inputs['complaint'] as String,
+    for (final c in (inputs['additionalComplaints'] as List?) ?? const [])
+      if (c is String) c,
+  ];
+  if (complaints.isNotEmpty) {
+    b.writeln('Complaints: ${complaints.join(', ')}');
+  }
+  final notes = inputs['extraComplaintNotes'] as String?;
+  if (notes != null && notes.trim().isNotEmpty) {
+    b.writeln('Additional complaint notes: ${notes.trim()}');
+  }
+
+  final probes = inputs['probes'];
+  if (probes is Map && probes.isNotEmpty) {
+    final yes = probes.entries
+        .where((e) => e.value == true)
+        .map((e) => e.key.toString())
+        .toList();
+    if (yes.isNotEmpty) b.writeln('Concerning probes: ${yes.join(', ')}');
+  }
+
+  final mods = (inputs['modifiers'] as Map?) ?? const {};
+  final ms = <String>[
+    if (mods['sex'] != null) 'sex ${mods['sex']}',
+    if (mods['pregnant'] == true) 'pregnant',
+    if (mods['immunocompromised'] == true) 'immunocompromised',
+    if (mods['cfsLevel'] != null) 'frailty scale ${mods['cfsLevel']}',
+  ];
+  if (ms.isNotEmpty) b.writeln('Modifiers: ${ms.join(', ')}');
+
+  b.writeln('Tier 1 result: ${r.finalTier.label}.');
+  if (r.mergeReasons.isNotEmpty) {
+    b.writeln('Findings: ${r.mergeReasons.join('; ')}');
+  }
+  if (r.tier2 != null && r.tier2!.summary.isNotEmpty) {
+    b.writeln('Earlier AI summary: ${r.tier2!.summary}');
+  }
+  if (r.safetyFlags.contains('vitalReviewRequired')) {
+    b.writeln('NOTE: vitals review required - some measurements were missing.');
+  }
+  return b.toString();
 }

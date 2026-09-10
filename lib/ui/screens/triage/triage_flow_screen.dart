@@ -12,6 +12,7 @@ import '../../../triage/tier2.dart';
 import '../../theme/app_tokens.dart';
 import '../../widgets/answer_chip.dart';
 import '../../widgets/question_scaffold.dart';
+import '../../widgets/stepper_tiles.dart';
 import 'burn_step.dart';
 import 'complaint_step.dart';
 import 'danger_signs_step.dart';
@@ -42,9 +43,9 @@ class ResultNode extends Node {
   const ResultNode();
 }
 
-/// Age bracket gate.
-class AgeNode extends Node {
-  const AgeNode();
+/// Age bracket gate / patient details (name, exact age, sex).
+class PatientInfoNode extends Node {
+  const PatientInfoNode();
 }
 
 /// Danger-sign gate.
@@ -52,9 +53,14 @@ class DangerNode extends Node {
   const DangerNode();
 }
 
-/// Chief complaint (Section D1).
+/// Chief complaint (Section D1) picker menu.
 class ComplaintNode extends Node {
   const ComplaintNode();
+}
+
+/// "Any other problems?" loop-back prompt shown after each complaint round.
+class MoreProblemsNode extends Node {
+  const MoreProblemsNode();
 }
 
 /// GCS component ('eye', 'verbal', 'motor').
@@ -96,8 +102,9 @@ bool _gcsIndicated(TriageAnswers a) {
 
 /// Whether the sepsis screen is engaged (spec §9 gate).
 bool _sepsisEngaged(TriageAnswers a) {
-  if (a.chiefComplaint == ChiefComplaint.fever) return true;
-  // Shown when temperature or SpO2 was not measured.
+  // Any selected complaint pipeline may be fever; the screen also shows when
+  // temperature or SpO2 was not measured.
+  if (a.answeredComplaints.contains(ChiefComplaint.fever)) return true;
   if (a.tempMissing || a.spo2Missing) return true;
   if (a.sepsis.f1 == true) return true;
   return false;
@@ -106,7 +113,7 @@ bool _sepsisEngaged(TriageAnswers a) {
 /// Builds the ordered walkthrough node list for the current answers.
 List<Node> _buildNodes(TriageAnswers a) {
   final nodes = <Node>[
-    const AgeNode(),
+    const PatientInfoNode(),
     const DangerNode(),
   ];
 
@@ -159,10 +166,15 @@ List<Node> _buildNodes(TriageAnswers a) {
     ]);
   }
 
-  // Probes for a branch.
-  final branch = a.chiefComplaint?.branch;
-  if (branch != null) {
-    nodes.add(ProbesNode(branch));
+  // Probes for the complaint currently being worked through.
+  final activeBranch = a.activeComplaint?.branch;
+  if (activeBranch != null) {
+    nodes.add(ProbesNode(activeBranch));
+  }
+
+  // Loop back prompt: allows collecting more complaints.
+  if (a.answeredComplaints.isNotEmpty) {
+    nodes.add(const MoreProblemsNode());
   }
 
   // Sepsis when engaged.
@@ -170,8 +182,8 @@ List<Node> _buildNodes(TriageAnswers a) {
     nodes.add(const SepsisNode());
   }
 
-  // Burn module for the wound/burn complaint (spec §11/§22, step 7).
-  if (a.chiefComplaint == ChiefComplaint.wound) {
+  // Burn module for any selected wound/burn complaint (spec §11/§22, step 7).
+  if (a.answeredComplaints.contains(ChiefComplaint.wound)) {
     nodes.add(const BurnNode());
   }
 
@@ -207,9 +219,15 @@ class TriageFlowScreen extends StatefulWidget {
 
 class _TriageFlowScreenState extends State<TriageFlowScreen> {
   final TriageAnswers _answers = TriageAnswers();
+  late final TextEditingController _nameController = TextEditingController();
   late final TriageRecordStore _store =
       widget.store ?? TriageRecordStore();
   int _step = 0;
+
+  /// The node currently on screen (captured during build). Advancement works
+  /// from this identity so list-length changes don't skew the index math.
+  Node? _shownNode;
+
   bool _jumpedToResult = false;
 
   /// Content fingerprint of the last record persisted for this session, so
@@ -261,16 +279,42 @@ class _TriageFlowScreenState extends State<TriageFlowScreen> {
         }
       });
 
+  /// Whether [a] and [b] name the same step. Nodes are rebuilt on every
+  /// answer, and the list length can change (e.g. probes drop off once the
+  /// active complaint is confirmed), so advancing must match by identity
+  /// rather than by a raw list index.
+  bool _sameNode(Node a, Node b) {
+    if (a.runtimeType != b.runtimeType) return false;
+    return switch ((a, b)) {
+      (VitalNode(field: final fa), VitalNode(field: final fb)) => fa == fb,
+      (GcsNode(component: final ca), GcsNode(component: final cb)) =>
+        ca == cb,
+      (ProbesNode(branch: final ba), ProbesNode(branch: final bb)) =>
+        ba == bb,
+      _ => true,
+    };
+  }
+
   void _next() {
-    if (_step < _nodeCount - 1) {
-      _goTo(_step + 1);
-    } else {
-      _goTo(_nodeCount - 1);
-    }
+    setState(() {
+      final nodes = _buildNodes(_answers);
+      var idx = _step;
+      final shown = _shownNode;
+      if (shown != null) {
+        final match = nodes.indexWhere((n) => _sameNode(n, shown));
+        if (match >= 0) idx = match;
+      }
+      _step = (idx + 1).clamp(0, nodes.length - 1);
+      _jumpedToResult = false;
+      if (nodes[_step] is ResultNode) {
+        _saveResult(_answers);
+      }
+    });
   }
 
   void _restart() => setState(() {
         _answers.reset();
+        _nameController.clear();
         _step = 0;
         _jumpedToResult = false;
         _savedFingerprint = null;
@@ -293,6 +337,7 @@ class _TriageFlowScreenState extends State<TriageFlowScreen> {
     final nodes = _buildNodes(_answers);
     final idx = _step.clamp(0, nodes.length - 1);
     final node = nodes[idx];
+    _shownNode = node;
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(title: const Text('Triage')),
@@ -310,8 +355,8 @@ class _TriageFlowScreenState extends State<TriageFlowScreen> {
 
   Widget _buildNode(Node node, int index, int count) {
     switch (node) {
-      case AgeNode():
-        return _ageGate(index, count);
+      case PatientInfoNode():
+        return _patientInfo(index, count);
       case DangerNode():
         return DangerSignsStep(
           answers: _answers,
@@ -339,9 +384,12 @@ class _TriageFlowScreenState extends State<TriageFlowScreen> {
           progress: index,
           steps: count,
           onAdvance: _next,
+          onRefresh: () => setState(() {}),
           onBack: () => _goTo(index - 1),
           onRestart: _restart,
         );
+      case MoreProblemsNode():
+        return _moreProblems(index, count);
       case GcsNode(:final component):
         return GcsStep(
           component: component,
@@ -418,7 +466,7 @@ class _TriageFlowScreenState extends State<TriageFlowScreen> {
     return 0;
   }
 
-  Widget _ageGate(int index, int count) {
+  Widget _patientInfo(int index, int count) {
     return QuestionScaffold(
       progress: index + 1,
       steps: count,
@@ -429,10 +477,73 @@ class _TriageFlowScreenState extends State<TriageFlowScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
-            'Who is this for?',
+            'Tell us about the patient',
             style: Theme.of(context).textTheme.headlineMedium,
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 4),
+          Text(
+            'Optional details help label the record. You can leave them '
+            'blank and continue.',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+          const SizedBox(height: 20),
+          TextField(
+            controller: _nameController,
+            style: const TextStyle(
+              fontSize: 16,
+              color: AppColors.textPrimary,
+            ),
+            decoration: InputDecoration(
+              labelText: 'Patient name (optional)',
+              hintText: 'e.g. Fatima or a case code',
+              filled: true,
+              fillColor: AppColors.surface,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+                borderSide:
+                    BorderSide(color: Colors.white.withValues(alpha: 0.20)),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+                borderSide:
+                    BorderSide(color: Colors.white.withValues(alpha: 0.20)),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          Text(
+            'Age',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Enter the exact age to auto-select the age band below.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 12),
+          StepperTiles(
+            value: (_answers.modifiers.ageYears ?? 30).toDouble(),
+            onChanged: (v) => setState(() {
+              _answers.modifiers.ageYears = v.round();
+              final bracket = AgeGroup.fromYears(_answers.modifiers.ageYears);
+              if (bracket != null) _answers.ageGroup = bracket;
+            }),
+            min: 0,
+            max: 120,
+            step: 1,
+            unit: 'y',
+            canBeMissing: true,
+            missing: _answers.modifiers.ageYears == null,
+            onMissing: () => setState(() {
+              _answers.modifiers.ageYears = null;
+            }),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Or select the age band directly:',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 4),
           for (final g in AgeGroup.values) ...[
             AnswerChip(
               label: g.label,
@@ -445,15 +556,102 @@ class _TriageFlowScreenState extends State<TriageFlowScreen> {
                     : Icons.person,
               },
               selected: _answers.ageGroup == g,
-              onSelected: () {
-                setState(() => _answers.ageGroup = g);
-                _next();
-              },
+              onSelected: () =>
+                  setState(() => _answers.ageGroup = g),
             ),
             const SizedBox(height: AppMetrics.answerGap),
           ],
+          const SizedBox(height: 8),
+          Text(
+            'Sex',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Only used to decide whether the pregnancy question applies.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 12),
+          for (final s in const [
+            ('male', 'Male', Icons.male),
+            ('female', 'Female', Icons.female),
+            (null, 'Prefer not to say', Icons.help_outline),
+          ]) ...[
+            AnswerChip(
+              label: s.$2,
+              icon: s.$3,
+              selected: _answers.modifiers.sex == s.$1,
+              onSelected: () =>
+                  setState(() => _answers.modifiers.sex = s.$1),
+            ),
+            const SizedBox(height: AppMetrics.answerGap),
+          ],
+          const SizedBox(height: 28),
+          FilledButton.icon(
+            onPressed: () => setState(() {
+              final name = _nameController.text.trim();
+              _answers.patientName = name.isEmpty ? null : name;
+              _answers.modifiers.ageAnswered = true;
+              _answers.modifiers.sexAnswered = true;
+              _next();
+            }),
+            icon: const Icon(Icons.arrow_forward),
+            label: const Text('Continue'),
+          ),
         ],
       ),
     );
+  }
+
+  Widget _moreProblems(int index, int count) {
+    return QuestionScaffold(
+      progress: index + 1,
+      steps: count,
+      onBack: () => _goTo(index - 1),
+      onUndo: () => _goTo(index - 1),
+      onRestart: _restart,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Any other problems?',
+            style: Theme.of(context).textTheme.headlineMedium,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'You can add more complaints or continue to the questions.',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+          const SizedBox(height: 20),
+          AnswerChip(
+            label: 'Yes, add another problem',
+            icon: Icons.playlist_add,
+            selected: false,
+            onSelected: () => setState(() {
+              _answers.activeComplaint = null;
+              _goTo(_complaintIndex());
+            }),
+          ),
+          const SizedBox(height: AppMetrics.answerGap),
+          AnswerChip(
+            label: 'No, that is all',
+            icon: Icons.done_all,
+            selected: false,
+            onSelected: () {
+              _answers.activeComplaint = null;
+              _next();
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  int _complaintIndex() {
+    final nodes = _buildNodes(_answers);
+    for (var i = 0; i < nodes.length; i++) {
+      if (nodes[i] is ComplaintNode) return i;
+    }
+    return 1;
   }
 }

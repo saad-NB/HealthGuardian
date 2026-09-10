@@ -51,6 +51,10 @@ class Tier2Payload {
         'total': gcsTotal,
       },
       'chiefComplaint': a.chiefComplaint?.label,
+      'additionalComplaints':
+          a.additionalComplaints.map((c) => c.label).toList(),
+      if (a.extraComplaintNotes.trim().isNotEmpty)
+        'extraComplaintNotes': a.extraComplaintNotes.trim(),
       'probeAnswers': Map<String, dynamic>.from(a.probeAnswers),
       'sepsisScreen': {
         'f1InfectionSuspected': a.sepsis.f1,
@@ -109,8 +113,17 @@ String ageBandText(AgeGroup g) => switch (g) {
 String buildPatientContext(TriageAnswers a, TriageResult result) {
   final b = StringBuffer()
     ..writeln('TIER 1 TRIAGE CONTEXT (decision support - not a diagnosis)')
-    ..writeln('Age group: ${a.ageGroup?.label ?? 'Unknown'}')
-    ..writeln('Chief complaint: ${a.chiefComplaint?.label ?? 'Not stated'}');
+    ..writeln('Age group: ${a.ageGroup?.label ?? 'Unknown'}');
+
+  final complaints = <String>[
+    if (a.chiefComplaint != null) a.chiefComplaint!.label,
+    ...a.additionalComplaints.map((c) => c.label),
+  ];
+  b.writeln(
+      'Complaints: ${complaints.isEmpty ? 'Not stated' : complaints.join(', ')}');
+  if (a.extraComplaintNotes.trim().isNotEmpty) {
+    b.writeln('Additional complaint notes: ${a.extraComplaintNotes.trim()}');
+  }
 
   final vitalLines = <String>[
     if (a.respiratoryRate != null) 'RR ${a.respiratoryRate}/min',

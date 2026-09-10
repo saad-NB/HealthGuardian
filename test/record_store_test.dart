@@ -185,11 +185,13 @@ void main() {
       }
 
       await tap('Adult');
-      await cont(); // danger gates
-      for (var i = 0; i < 8; i++) {
-        await cont(); // 8 NEWS2 vitals
+      await cont(); // patient info -> danger gates
+      for (var i = 0; i < 9; i++) {
+        await cont(); // danger gates + 8 NEWS2 vitals
       }
       await tap('Other problem');
+      await cont(); // complaint menu -> any other problems
+      await tap('No, that is all');
       await cont(); // modifiers
 
       await tester.runAsync(() async {

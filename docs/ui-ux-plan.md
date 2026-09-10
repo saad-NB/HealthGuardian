@@ -164,18 +164,20 @@ Beyond WCAG 2.1 AA, this product adds **emergency-specific** requirements.
 
 ### 5.1 Top-level structure (3 tabs)
 
+> **Implementation note (ADR-016):** shipped shell is **Start / History / Settings**; the old Models tab moved under Settings, and **Ask AI** is a session carried by the shell (opened from the result screen or from a History record) rather than a nav destination.
+
 ```
 ┌──────────────────────────────────────────────┐
 │  Sehat Nigraan                               │
 ├──────────────┬──────────────┬────────────────┤
-│  START       │  HISTORY      │  MODELS        │
-│  (triage)    │  (records)    │  (settings)    │
+│  START       │  HISTORY      │  SETTINGS      │
+│  (triage)    │  (records)    │  (models/app)  │
 └──────────────┴──────────────┴────────────────┘
 ```
 
 - **[Start]** — the default, only screen needed in an emergency. One big "Start Triage / جنچ شروع کریں" button.
-- **[History]** — past sessions, exportable/shareable summary for the clinic. Read-only by default.
-- **[Models]** — developer/advanced: model files, download state, app info. **Visually de-prioritized** (grey small icon), because a family user must never land there accidentally.
+- **[History]** — past sessions, exportable/shareable summary for the clinic. Read-only by default; detail card includes vital chips, complaints, AI summary and an "Ask AI" handoff.
+- **[Settings]** — developer/advanced: model files, download state, app info. Model management is tucked under Settings because a family user must never land there accidentally.
 
 ### 5.2 Core flow map (triage walkthrough)
 

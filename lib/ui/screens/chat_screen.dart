@@ -14,12 +14,15 @@ import '../theme/app_tokens.dart';
 /// 2. Pushed from the result screen with [patientContext] attached — a
 ///    read-only triage context seeds the conversation; transcripts stay
 ///    ephemeral (never persisted) per ADR-014.
+/// 3. Opened from History via [RootShell] with [patientContext] = a rebuilt
+///    record context and [attachedTitle] = the case name + timestamp.
 class ChatScreen extends StatefulWidget {
   const ChatScreen({
     super.key,
     required this.app,
     this.service,
     this.patientContext,
+    this.attachedTitle,
   });
 
   final AppState app;
@@ -29,6 +32,9 @@ class ChatScreen extends StatefulWidget {
 
   /// Optional read-only triage context attached to this session.
   final String? patientContext;
+
+  /// Optional case label shown in the app bar when [patientContext] is set.
+  final String? attachedTitle;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -59,6 +65,18 @@ class _ChatScreenState extends State<ChatScreen> {
   String _lastFinishReason = 'unknown';
 
   bool get _contextAttached => widget.patientContext != null && widget.patientContext!.isNotEmpty;
+
+  @override
+  void didUpdateWidget(ChatScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // A new attached context (e.g. a different History record) must start a
+    // fresh, disposable conversation — never carry over the previous case.
+    if (oldWidget.patientContext != widget.patientContext) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _startNewChat();
+      });
+    }
+  }
 
   @override
   void dispose() {
@@ -164,7 +182,11 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(_contextAttached ? 'Ask about this result' : 'Ask AI'),
+        title: Text(_contextAttached
+            ? (widget.attachedTitle?.isNotEmpty == true
+                ? widget.attachedTitle!
+                : 'Ask about this result')
+            : 'Ask AI'),
         actions: [
           if (_messages.isNotEmpty)
             Padding(

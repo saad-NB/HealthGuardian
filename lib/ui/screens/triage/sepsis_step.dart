@@ -9,8 +9,9 @@ import '../../widgets/segmented_yes_no.dart';
 /// Seven tri-state Y/N questions; when F1 is suspected infection the screen
 /// enables qSOFA/pedSIRS tiering in the engine.
 ///
-/// Defaults are pre-filled from vitals/age where an unambiguous answer can be
-/// inferred (spec §21 concern lists).
+/// Nothing is pre-selected: each row starts unanswered and the tapped option
+/// highlights, exactly like the other question rows. The engine treats null as
+/// "No" (fail-closed), so skipping the screen never fabricates a risk.
 class SepsisStep extends StatefulWidget {
   const SepsisStep({
     super.key,
@@ -34,66 +35,16 @@ class SepsisStep extends StatefulWidget {
 }
 
 class _SepsisStepState extends State<SepsisStep> {
-  @override
-  void initState() {
-    super.initState();
-    _prefill();
-  }
-
-  void _prefill() {
-    final s = widget.answers.sepsis;
-    final age = widget.answers.ageGroup;
-    if (widget.answers.chiefComplaint == ChiefComplaint.fever) {
-      s.f1 ??= true;
-    }
-    // F2 — altered mental status.
-    if (widget.answers.consciousness != null) {
-      s.f2 ??= widget.answers.consciousness != Avpu.alert;
-    }
-    // F3 — RR >=22 (adult) or age-adjusted high (child).
-    final rr = widget.answers.respiratoryRate;
-    if (rr != null) {
-      if (age?.usesNews2 ?? false) {
-        s.f3 ??= rr >= 22;
-      } else if (age?.pedsBracket != null) {
-        s.f3 ??= rr > _pedsRR95th(age!.pedsBracket!);
-      }
-    }
-    // F4 — SBP <=100 (adult qSOFA).
-    final sbp = widget.answers.systolicBp;
-    if (sbp != null && (age?.usesNews2 ?? false)) {
-      s.f4 ??= sbp <= 100;
-    }
-    // F5 — age >=65.
-    if (age != null) {
-      s.f5 ??= age == AgeGroup.olderAdult;
-    }
-    // F7 — temp <36 or >38.5.
-    final temp = widget.answers.temperature;
-    if (temp != null) {
-      s.f7 ??= (temp < 36.0 || temp > 38.5);
-    }
-  }
-
-  double _pedsRR95th(String bracket) => switch (bracket) {
-        'infant' => 40,
-        'toddler' => 30,
-        'preschool' => 25,
-        'school' => 22,
-        'preteen' => 20,
-        _ => 20,
-      };
-
   void _set(String field, bool value) {
     setState(() {
       switch (field) {
-        case 'f1': widget.answers.sepsis.f1 = value;
-        case 'f2': widget.answers.sepsis.f2 = value;
-        case 'f3': widget.answers.sepsis.f3 = value;
-        case 'f4': widget.answers.sepsis.f4 = value;
-        case 'f5': widget.answers.sepsis.f5 = value;
-        case 'f6': widget.answers.sepsis.f6 = value;
-        case 'f7': widget.answers.sepsis.f7 = value;
+        case 'F1': widget.answers.sepsis.f1 = value;
+        case 'F2': widget.answers.sepsis.f2 = value;
+        case 'F3': widget.answers.sepsis.f3 = value;
+        case 'F4': widget.answers.sepsis.f4 = value;
+        case 'F5': widget.answers.sepsis.f5 = value;
+        case 'F6': widget.answers.sepsis.f6 = value;
+        case 'F7': widget.answers.sepsis.f7 = value;
       }
     });
   }
