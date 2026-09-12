@@ -4,8 +4,10 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart' show debugPrint;
 
 import '../models.dart';
+import '../dsp/spectral_denoise.dart';
 import 'breath_capture.dart';
 import 'breath_pipeline.dart';
+import 'noise_profile_store.dart';
 
 /// Tunable service-level RR constants (mirrors VITALS_SENSING §5.2).
 class BreathingRateServiceConfig {
@@ -13,6 +15,7 @@ class BreathingRateServiceConfig {
     this.sessionSeconds = 45,
     this.minUsableSeconds = 30,
     this.detrendSeconds = 15,
+    this.denoise = true,
   });
 
   final int sessionSeconds;
@@ -23,6 +26,10 @@ class BreathingRateServiceConfig {
   /// so longer feeds want the product default (15 s) and short synthetic
   /// tests shorten it.
   final double detrendSeconds;
+
+  /// Whether to subtract the stored background-noise profile (learned by the
+  /// separate calibration step) from the audio before the envelope pipeline.
+  final bool denoise;
 }
 
 /// Drives the microphone capture through [BreathPipeline] and emits the
@@ -87,6 +94,7 @@ class BreathingRateService {
           : int.tryParse(d['usable']!.replaceAll('s', '')),
       'ibis': num.tryParse(d['ibis']!),
       'lag': d['lag_ms'] == '—' ? null : num.tryParse(d['lag_ms']!),
+      'sub_e': d['sub_e'] == '—' ? null : num.tryParse(d['sub_e']!),
       'peaks': int.tryParse(d['peaks']!),
       'peak': d['peak_amp'] == '—' ? null : num.tryParse(d['peak_amp']!),
       'band': num.tryParse(d['band_rms']!),
@@ -100,8 +108,10 @@ class BreathingRateService {
   }
 
   Stream<MeasurementEvent> _measure() async* {
-    final clock = Stopwatch()..start();
     final source = _sourceFactory();
+    final denoiser = _config.denoise ? SpectralDenoiser() : null;
+    final profile = NoiseProfileStore.profile;
+    if (denoiser != null && profile != null) denoiser.applyProfile(profile);
 
     try {
       await source.start();
@@ -115,12 +125,17 @@ class BreathingRateService {
     var lastSecond = -1;
     try {
       await for (final chunk in source.stream) {
+        // Subtract the learned room noise (if the user ran the background
+        // calibration) before the envelope pipeline sees the audio.
+        final samples = denoiser == null
+            ? chunk.samples
+            : denoiser.process(chunk.samples);
         _pipeline.add(
-          samples: chunk.samples,
+          samples: samples,
           elapsedSeconds: chunk.elapsedSeconds,
         );
 
-        final sec = clock.elapsed.inSeconds;
+        final sec = chunk.elapsedSeconds.floor();
         if (sec == lastSecond) continue;
         lastSecond = sec;
 
@@ -129,7 +144,7 @@ class BreathingRateService {
           'HG_RR ${jsonEncode(_logEntry(type: 'p', sec: sec, cpm: est?.cpm))}',
         );
         yield MeasurementProgress(
-          sec.toDouble(),
+          chunk.elapsedSeconds,
           instantValue: est?.cpm,
         );
 

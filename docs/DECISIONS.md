@@ -522,6 +522,55 @@ an **inhale and an exhale energy burst per breath**, so the raw peak cadence is
 the burst rate, not the breath rate. After the subharmonic fix the same captures
 read 10.4/9.3/13.9/14.9/18.5 (mean |err| ≈ 1 cpm); three further on-device
 sessions agreed within ±2 bpm. This is now the operating assumption for the
-mouth/nose placement the UI instructs. `singleBurstCorrFloor` / `doubleBurstCorrMargin`
-are the tunable constants; a two-burst synthetic bench locks it in.
+mouth/nose placement the UI instructs. `singleBurstCorrFloor` /
+`subharmonicEnergyRatio` are the tunable constants; a two-burst synthetic bench
+locks it in.
+
+**Implementation notes (2026-09-12h, RR background calibration + denoising —
+`VITALS_SENSING §5.2`):** to reduce per-device tuning, the RR flow records a
+**6 s background-only profile in a separate pre-step** and applies **spectral
+subtraction** using it to the measurement audio, ahead of the existing
+band-pass/envelope/peak chain. New pure-Dart `fft.dart` (radix-2),
+`spectral_denoise.dart` (512-pt Hann STFT, 50% overlap, COLA-exact overlap-add;
+per-bin `|X| - α|N|` with α = 2, β = 0.05), `BreathingCalibrationService`, and an
+in-memory `NoiseProfileStore`. The RR page shows **"Measure background noise"**
+above **"Measure with phone"**; measuring without a profile prompts and
+redirects through the background step, then proceeds to the normal countdown.
+The first attempt ran calibration *inside* the measurement session, which
+briefly showed the 45 s countdown before the noise window — moving it to an
+explicit pre-step fixes that. Output length is preserved so the pipeline's
+per-chunk timing is unchanged, and the denoised signal feeds the existing
+ambient-noise gate. `BreathingRateServiceConfig` gains `denoise`. Benches: FFT
+round-trip; denoiser suppresses a calibrated tone while preserving an
+uncalibrated one and preserves chunk length; calibration service learns a
+profile / fails cleanly; service applies a stored profile without disturbing
+detection.
+
+**Tuning note (2026-09-12i, high-rate halving):** synthetic two-burst scans
+showed fast rates being halved (45 → 22.5) because `peakTrainPeriodMs()`'s
+pair-sum branch triggered on ~2% interval jitter. It now requires a substantial
+short/long swing (`minPairSwing = 0.12`) before summing; 45 now reads 45.5 and
+the real captured sessions are byte-identical. Lowering the peak refractory to
+the burst ceiling was tried and **reverted** — it destabilised the low-rate
+doubling decision (v2 22.5 → 11.5). The remaining synthetic artifact is 30 bpm
+two-burst (refractory-edge aliasing); the planned Welch-PSD + harmonic-fundamental
+estimator is the intended fix.
+
+**Implementation notes (2026-09-12j, RR high-rate halving on device — octave
+disambiguation):** on-device, rates up to ~21 bpm were correct but 30+ read
+**13-14** (roughly half). Cause: at high rates the inhale/exhale bursts fall
+inside the peak refractory (~1 s), so the peak detector resolves **one crest per
+breath** and the peak train already *is* the breath period; the old doubling
+condition (`corrDouble >= corrBurst - 0.2`) then doubled a correct period. A
+peak cadence of 30/min is fundamentally ambiguous — 30 breaths/min with one
+burst per breath, or 15 breaths/min with two — and only the envelope's
+subharmonic content can tell them apart. `breathPeriodMs()` now keeps the
+pristine-rhythm guard (`corrBurst >= singleBurstCorrFloor` → never double) and
+otherwise doubles only when a Hann-windowed **Goertzel** test finds a genuine
+envelope fundamental at half the cadence: `subharmonicRatio()` = envelope energy
+at f/2 ÷ (energy at f/2 + energy at f) ≥ `subharmonicEnergyRatio` (0.08).
+Measured on synthetics, one burst/breath gives ≈0.000 and a true two-burst
+envelope ≈0.14+, a clean separation. `doubleBurstCorrMargin` is removed;
+`sub_e` is added to the HG_RR diagnostic line for on-device validation.
+
 

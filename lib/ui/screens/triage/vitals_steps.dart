@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../../../triage/models.dart';
+import '../../../vitals/breathing_rate/noise_calibration_view.dart';
+import '../../../vitals/breathing_rate/noise_profile_store.dart';
 import '../../../vitals/models.dart' as vitals;
 import '../../theme/app_tokens.dart';
 import '../../widgets/answer_chip.dart';
@@ -192,7 +194,9 @@ class VitalsStep extends StatelessWidget {
   }
 
   /// "Measure with phone" affordance shown above the manual stepper where a
-  /// sensor path exists (VITALS_SENSING §2).
+  /// sensor path exists (VITALS_SENSING §2). For breathing rate the background
+  /// noise must be learned first, so tapping it without a profile prompts the
+  /// user and redirects them through the background step before measuring.
   Widget? _measureButton(BuildContext context, vitals.VitalKind kind) {
     final onMeasure = this.onMeasure;
     final supported = measureSupported?.call(kind) ?? (onMeasure != null);
@@ -201,6 +205,14 @@ class VitalsStep extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 12),
       child: FilledButton.tonalIcon(
         onPressed: () async {
+          if (kind == vitals.VitalKind.breathingRate &&
+              !NoiseProfileStore.hasProfile) {
+            final go = await confirmBreathingNoiseCalibration(context);
+            if (!go || !context.mounted) return;
+            final learned = await launchBreathingNoiseCalibration(context);
+            if (!learned || !context.mounted) return;
+            onRefresh();
+          }
           final reading = await onMeasure(kind);
           if (reading != null && context.mounted) {
             ScaffoldMessenger.of(context)
@@ -222,6 +234,49 @@ class VitalsStep extends StatelessWidget {
     );
   }
 
+  /// Breathing rate only: record a few seconds of quiet room so the measurement
+  /// can subtract the learned noise spectrum. Sits above "Measure with phone".
+  Widget? _backgroundNoiseButton(BuildContext context) {
+    if (onMeasure == null ||
+        !(measureSupported?.call(vitals.VitalKind.breathingRate) ?? true)) {
+      return null;
+    }
+    final learned = NoiseProfileStore.hasProfile;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: OutlinedButton.icon(
+        onPressed: () async {
+          final ok = await launchBreathingNoiseCalibration(context);
+          if (!context.mounted) return;
+          if (ok) {
+            ScaffoldMessenger.of(context)
+              ..hideCurrentSnackBar()
+              ..showSnackBar(
+                const SnackBar(
+                  content: Text(
+                      'Background noise learned. You can measure breathing now.'),
+                  duration: Duration(seconds: 3),
+                ),
+              );
+          }
+          onRefresh();
+        },
+        icon: Icon(
+          learned ? Icons.check_circle_outline : Icons.hearing,
+          size: 18,
+        ),
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size.fromHeight(AppMetrics.minTouch),
+        ),
+        label: Text(
+          learned
+              ? 'Measure background noise again'
+              : 'Measure background noise',
+        ),
+      ),
+    );
+  }
+
   Widget _rr(BuildContext context) {
     return _withMeasurer(
       context,
@@ -235,6 +290,7 @@ class VitalsStep extends StatelessWidget {
         manualMax: 200,
       ),
       kind: vitals.VitalKind.breathingRate,
+      leading: _backgroundNoiseButton(context),
     );
   }
 
@@ -242,12 +298,17 @@ class VitalsStep extends StatelessWidget {
     BuildContext context, {
     required Widget child,
     required vitals.VitalKind kind,
+    Widget? leading,
   }) {
     final button = _measureButton(context, kind);
     if (button == null) return child;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [button, child],
+      children: [
+        ?leading,
+        button,
+        child,
+      ],
     );
   }
 

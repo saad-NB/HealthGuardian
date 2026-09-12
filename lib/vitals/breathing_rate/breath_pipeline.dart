@@ -49,7 +49,8 @@ class BreathConfig {
     this.cadenceHarmonicTolerance = 0.3,
     this.minDominantCycles = 3,
     this.singleBurstCorrFloor = 0.95,
-    this.doubleBurstCorrMargin = 0.2,
+    this.minPairSwing = 0.12,
+    this.subharmonicEnergyRatio = 0.08,
   });
 
   /// Microphone sample rate.
@@ -131,9 +132,19 @@ class BreathConfig {
   /// single-burst rhythm (synthetic/ideal) and not doubled to a subharmonic.
   final double singleBurstCorrFloor;
 
-  /// How close (in correlation) the doubled lag must be to the burst lag for
-  /// the doubled period to be accepted as the true breath cycle.
-  final double doubleBurstCorrMargin;
+  /// Minimum relative swing between alternating short/long inter-breath
+  /// intervals before they are read as an inhale/exhale pair (whose sum is the
+  /// breath period) rather than detector jitter.
+  final double minPairSwing;
+
+  /// Minimum envelope energy at half the peak-train cadence, as a fraction of
+  /// the cadence and half-cadence energy combined (0..1), required to accept
+  /// the doubled period. A peak cadence of 30/min is ambiguous: it is either 30
+  /// breaths/min with one burst per breath or 15 breaths/min with two bursts per
+  /// breath. Only the presence of a genuine envelope fundamental at the
+  /// half-rate (the subharmonic) can tell them apart — without it, doubling a
+  /// real tachypneic rate would silently halve it.
+  final double subharmonicEnergyRatio;
 }
 
 /// Real-time microphone -> RR (breaths/min) processor. Framework-free: the
@@ -231,29 +242,63 @@ class BreathPipeline {
     return _acorrAt(k);
   }
 
+  /// Hann-windowed Goertzel power of the band-passed envelope at [freqHz].
+  /// Unlike autocorrelation (which folds in every harmonic), this isolates one
+  /// frequency so a true envelope fundamental can be told from leakage.
+  double _envTonePower(double freqHz) {
+    final vals = _envWindow.values;
+    final n = vals.length;
+    if (n < 8 || freqHz <= 0) return 0;
+    final envHz = 1000 / _c.envelopeMs;
+    final w = 2 * math.pi * freqHz / envHz;
+    final coeff = 2 * math.cos(w);
+    var s1 = 0.0, s2 = 0.0;
+    for (var i = 0; i < n; i++) {
+      final hann = 0.5 - 0.5 * math.cos(2 * math.pi * i / (n - 1));
+      final s0 = vals[i] * hann + coeff * s1 - s2;
+      s2 = s1;
+      s1 = s0;
+    }
+    final p = s1 * s1 + s2 * s2 - coeff * s1 * s2;
+    return p.isFinite && p > 0 ? p : 0;
+  }
+
+  /// Envelope energy at half the peak-train cadence as a fraction of the
+  /// energy at the cadence and the half-cadence combined (0..1). High when the
+  /// envelope genuinely has a fundamental there (two energy bursts per breath),
+  /// near zero for one burst per breath.
+  double subharmonicRatio() {
+    final burst = peakTrainPeriodMs();
+    if (burst == null || burst <= 0) return 0;
+    final fBurst = 1000 / burst;
+    final pBurst = _envTonePower(fBurst);
+    final pSub = _envTonePower(fBurst / 2);
+    final total = pBurst + pSub;
+    if (total <= 1e-12) return 0;
+    return pSub / total;
+  }
+
   /// The breath period (ms): the burst period from the peak train, doubled
   /// when the envelope shows a genuine subharmonic there.
   ///
   /// Breathing with the phone at the mouth/nose produces two energy bursts per
   /// breath (inhale + exhale), so the peak train's cadence is the *burst* rate
-  /// — roughly twice the breath rate. When the envelope's autocorrelation at
-  /// twice the burst period is nearly as strong as at the burst period (and
-  /// the burst period is not a pristine single-burst rhythm), the slower period
-  /// is the true breath cycle.
+  /// — roughly twice the breath rate. A peak cadence is ambiguous though: the
+  /// same cadence can be a slower breath with two bursts or a faster breath
+  /// with one. The doubled period is accepted only when the envelope carries a
+  /// real fundamental at half the cadence ([subharmonicRatio]); otherwise the
+  /// cadence is taken as the breath rate, so a genuine tachypneic 30+ rate is
+  /// not silently halved to 15.
   double? breathPeriodMs() {
     final burst = peakTrainPeriodMs();
     if (burst == null || burst <= 0) return null;
     final doubled = 2 * burst;
+    if (doubled > 60000 / _c.cpmMin) return burst;
+    // A pristine single-burst rhythm (near-perfect envelope periodicity at the
+    // burst lag) is already the breath period — never double it.
     final corrBurst = _corrAtLagMs(burst);
-    final corrDouble = _corrAtLagMs(doubled);
-    final withinBand = doubled <= 60000 / _c.cpmMin;
-    if (withinBand &&
-        corrBurst != null &&
-        corrDouble != null &&
-        corrBurst < _c.singleBurstCorrFloor &&
-        corrDouble >= corrBurst - _c.doubleBurstCorrMargin) {
-      return doubled;
-    }
+    if (corrBurst != null && corrBurst >= _c.singleBurstCorrFloor) return burst;
+    if (subharmonicRatio() >= _c.subharmonicEnergyRatio) return doubled;
     return burst;
   }
 
@@ -373,7 +418,7 @@ class BreathPipeline {
     final gap = peak.timestampMs - prev;
     if (gap > _c.peakGapSeconds * 1000) {
       // Long dead span: the signal was lost, restart usable coverage.
-      _ibis.clear();
+    _ibis.clear();
       _firstPeakTime = peak.timestampMs;
       _usableSeconds = 0;
       return;
@@ -460,8 +505,25 @@ class BreathPipeline {
     if (n < 6) return median;
     final alternating = _ibiAcorrAt(1) < -0.3 && _ibiAcorrAt(2) >= 0.5;
     if (alternating) {
-      final mean = _ibis.reduce((a, b) => a + b) / n;
-      return 2 * mean;
+      // Require a substantial short/long swing: a couple of percent of detector
+      // jitter also alternates, and treating it as the inhale/exhale pair would
+      // halve a genuine tachypneic rate (35 -> ~18, 45 -> ~22).
+      var meanEven = 0.0, meanOdd = 0.0;
+      var ne = 0, no = 0;
+      for (var i = 0; i < n; i++) {
+        if (i.isEven) {
+          meanEven += _ibis[i];
+          ne++;
+        } else {
+          meanOdd += _ibis[i];
+          no++;
+        }
+      }
+      meanEven /= ne;
+      meanOdd /= no;
+      final mean = (meanEven + meanOdd) / 2;
+      final swing = (meanEven - meanOdd).abs() / mean;
+      if (swing >= _c.minPairSwing) return 2 * mean;
     }
     return median;
   }
@@ -605,6 +667,7 @@ class BreathPipeline {
       'lag_ms': dom?.lagMs.toStringAsFixed(0) ?? '—',
       'corr': dom?.corr.toStringAsFixed(2) ?? '—',
       'cad_corr': cadenceCorrelation()?.toStringAsFixed(2) ?? '—',
+      'sub_e': subharmonicRatio().toStringAsFixed(2),
       'reg': regularity().toStringAsFixed(2),
       'amp': amplitudeFactor().toStringAsFixed(2),
       'noisy': ambientNoisy ? 'yes' : 'no',

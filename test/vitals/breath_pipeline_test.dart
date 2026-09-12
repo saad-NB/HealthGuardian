@@ -135,13 +135,28 @@ void main() {
       // A phone at the mouth/nose hears an inhale and an exhale burst per
       // breath, so the raw peak cadence is ~2x the breath rate. The pipeline
       // must fold the subharmonic back down.
-      for (final cpm in [10.0, 15.0, 18.0]) {
+      for (final cpm in [10.0, 15.0, 18.0, 24.0, 27.0]) {
         final p = BreathPipeline();
         feed(p, synthTwoBurstBreath(cpm: cpm, seconds: 45));
         final est = p.estimate();
         expect(est, isNotNull);
         expect(est!.cpm, closeTo(cpm, 3));
       }
+    });
+
+    test('subharmonic ratio separates one-burst from two-burst envelopes', () {
+      // One energy burst per breath: no envelope fundamental at half the peak
+      // cadence, so the octave must not be doubled (the device bug where 30+
+      // bpm read as ~13-14).
+      final one = BreathPipeline();
+      feed(one, synthBreath(cpm: 30, seconds: 45));
+      expect(one.subharmonicRatio(), lessThan(0.05));
+
+      // Two bursts per breath: a real envelope fundamental at half the peak
+      // cadence proves the doubled period is the breath cycle.
+      final two = BreathPipeline();
+      feed(two, synthTwoBurstBreath(cpm: 27, seconds: 45));
+      expect(two.subharmonicRatio(), greaterThan(0.08));
     });
 
     test('3 cpm is below band -> no estimate', () {

@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../../state/app_state.dart';
 import '../../ui/screens/settings_action.dart';
 import '../../ui/theme/app_tokens.dart';
+import '../breathing_rate/noise_calibration_view.dart';
+import '../breathing_rate/noise_profile_store.dart';
 import '../measurement_session.dart';
 import '../measurement_session_view.dart';
 import '../models.dart';
@@ -54,6 +56,14 @@ class _MonitorScreenState extends State<MonitorScreen> {
   }
 
   Future<void> _measure(BuildContext context, VitalKind kind) async {
+    // Breathing rate needs the room's noise profile first; if it's missing,
+    // prompt and redirect through the background step before measuring.
+    if (kind == VitalKind.breathingRate && !NoiseProfileStore.hasProfile) {
+      final go = await confirmBreathingNoiseCalibration(context);
+      if (!go || !context.mounted) return;
+      final learned = await launchBreathingNoiseCalibration(context);
+      if (!learned || !context.mounted) return;
+    }
     final session = widget.sessionFor?.call(kind);
     if (session == null) {
       ScaffoldMessenger.of(context).showSnackBar(

@@ -7,6 +7,8 @@ import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:healthguardian/vitals/breathing_rate/breath_capture.dart';
 import 'package:healthguardian/vitals/breathing_rate/breathing_rate_service.dart';
+import 'package:healthguardian/vitals/breathing_rate/noise_profile_store.dart';
+import 'package:healthguardian/vitals/dsp/spectral_denoise.dart';
 import 'package:healthguardian/vitals/models.dart';
 
 const _sampleRateHz = 16000.0;
@@ -72,16 +74,18 @@ Future<List<MeasurementEvent>> _run(BreathingRateService service) async {
 }
 
 void main() {
+  setUp(NoiseProfileStore.clear);
+
   const short = BreathingRateServiceConfig(
-    sessionSeconds: 12,
-    minUsableSeconds: 8,
+    sessionSeconds: 20,
+    minUsableSeconds: 12,
     detrendSeconds: 6,
   );
 
   test('success path emits progress then a confident reading', () async {
     final service = BreathingRateService(
       config: short,
-      sourceFactory: () => _FakeBreathSource(_synth(cpm: 15, seconds: 14)),
+      sourceFactory: () => _FakeBreathSource(_synth(cpm: 15, seconds: 30)),
     );
     final events = await _run(service);
 
@@ -99,7 +103,7 @@ void main() {
     final service = BreathingRateService(
       config: short,
       sourceFactory: () => _FakeBreathSource(
-        _synth(cpm: 15, seconds: 12, amplitude: 0),
+        _synth(cpm: 15, seconds: 24, amplitude: 0),
       ),
     );
     final events = await _run(service);
@@ -112,13 +116,35 @@ void main() {
     final service = BreathingRateService(
       config: short,
       sourceFactory: () => _FakeBreathSource(
-        _synth(cpm: 15, seconds: 12, amplitude: 1e-6, ambient: 0.09),
+        _synth(cpm: 15, seconds: 24, amplitude: 1e-6, ambient: 0.09),
       ),
     );
     final events = await _run(service);
     expect(events.last, isA<MeasurementInsufficient>());
     expect((events.last as MeasurementInsufficient).reason,
         contains('quiet'));
+  });
+
+  test('applies a stored noise profile without disturbing detection', () async {
+    // Learn a profile from synthetic background, then measure clean breathing.
+    final calibrator = SpectralDenoiser();
+    calibrator.calibrate(
+      _synth(cpm: 0, seconds: 1, amplitude: 1e-6, ambient: 0.02, seed: 1),
+    );
+    final profile = calibrator.finalizeCalibration();
+    expect(profile, isNotNull);
+    NoiseProfileStore.set(profile!);
+
+    final service = BreathingRateService(
+      config: short,
+      sourceFactory: () => _FakeBreathSource(_synth(cpm: 15, seconds: 30)),
+    );
+    final events = await _run(service);
+    expect(events.last, isA<MeasurementSuccess>());
+    expect(
+      (events.last as MeasurementSuccess).reading.value,
+      closeTo(15, 3),
+    );
   });
 
   test('capture failures surface as MeasurementFailed', () async {
@@ -144,7 +170,7 @@ void main() {
 
     final service = BreathingRateService(
       config: short,
-      sourceFactory: () => _FakeBreathSource(_synth(cpm: 15, seconds: 14)),
+      sourceFactory: () => _FakeBreathSource(_synth(cpm: 15, seconds: 30)),
     );
     await service.run().toList();
 

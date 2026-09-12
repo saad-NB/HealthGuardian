@@ -226,44 +226,68 @@ proves insufficient in practice.
 1. **Capture** (`breath_capture.dart`): `record` at **16 kHz**, mono, PCM16,
    with `autoGain / echoCancel / noiseSuppress` all off so the energy envelope
    we measure is the room's, not the on-device DSP's.
-2. **Audio band-pass** (`biquad.dart`): ~100–1000 Hz (550 Hz center, Q 0.6) —
+2. **Background calibration + spectral subtraction** (`spectral_denoise.dart`,
+   `fft.dart`, `breathing_calibration_service.dart`): a **separate pre-step**
+   (button "Measure background noise" above "Measure with phone" on the RR page,
+   screen "Learning background noise") records **6 s** of background-only audio
+   and averages its STFT magnitude spectrum into a per-bin noise profile held in
+   `NoiseProfileStore`. Tapping "Measure with phone" without a profile prompts
+   the user and redirects them through this step first. Every breath measurement
+   then has `alpha × noise` subtracted from each frame's magnitude
+   (over-subtraction `alpha = 2`, spectral floor `beta = 0.05` to avoid musical
+   noise) and overlap-adds back to the time domain (Hann, 512-pt FFT, 50%
+   overlap, COLA-exact). This removes stationary room noise (fans, AC hum, hiss)
+   device-independently, before any envelope work; output length is preserved so
+   downstream timing is unchanged.
+3. **Audio band-pass** (`biquad.dart`): ~100–1000 Hz (550 Hz center, Q 0.6) —
    suppresses speech high-frequencies, mains hum, and rumble.
-3. **Envelope** (`rms.dart`): short-time RMS over **30 ms** frames of the band
+4. **Envelope** (`rms.dart`): short-time RMS over **30 ms** frames of the band
    signal; normalised by a moving detrend so gain offsets don't dominate (a
    running mean bridges the detrend's warm-up so the first seconds count). The
    running mean is seeded at the first nonzero level and frames with a
    zero/near-zero denominator are skipped — a real capture starts with silent
    frames, and `0/0` would inject a NaN that permanently poisons the recursive
    envelope filters (`biquad.dart` also self-heals on non-finite state).
-4. **Envelope band-pass** ~0.07–1 Hz: two cascaded low-pass subtractions cut
+5. **Envelope band-pass** ~0.07–1 Hz: two cascaded low-pass subtractions cut
    the sub-band drift that otherwise masquerades as slow breathing (the 3 bpm
    guard), then an LP at 1 Hz kills ripple. Envelope values captured before the
    detrend window fills are the cascade's settle-in transient and are excluded
    from period detection.
-5. **Cycle detection** (`peak_detect.dart`): a hard refractory (= 60 bpm
+6. **Cycle detection** (`peak_detect.dart`): a hard refractory (= 60 bpm
    ceiling), a deep **fall ratio (0.35)** so rounded envelope crests and
    inhale/exhale splits don't double-count, and an **echo guard** that drops
    peaks below ~12% of the recent-accepted amplitude (an EMA, so one startup
    transient can't reject every later breath). Median inter-breath interval
    (IBI) → RR.
-6. **Rate from the peak train** (drift-free): `peakTrainPeriodMs()` uses the
-   median IBI, or the pair sum when the intervals alternate short/long from
-   filter echoes. The envelope autocorrelation's global maximum is *not* used to
-   override this — slow envelope drift (~14 s, only ~2 cycles in the window)
-   otherwise masquerades as a strong 4 cpm period; the correlation search is
-   capped to periods completing ≥3 cycles. `breathPeriodMs()` then doubles the
-   burst period to the breath cycle when the autocorrelation at **2× the burst
-   period** is nearly as strong as at the burst period: phone-at-mouth breathing
-   produces an **inhale + exhale burst per breath**, so the raw peak cadence is
-   the burst rate (~2× the breath rate).
-7. **Confidence**: low/med/high from peak regularity + periodicity + amplitude.
+7. **Rate from the peak train** (drift-free): `peakTrainPeriodMs()` uses the
+   median IBI, or the pair sum when the intervals alternate short/long by a
+   substantial margin (`minPairSwing`, so detector jitter isn't mistaken for an
+   inhale/exhale pair and a genuine tachypneic rate isn't halved). The envelope
+   autocorrelation's global maximum is *not* used to override this — slow
+   envelope drift (~14 s, only ~2 cycles in the window) otherwise masquerades
+   as a strong 4 cpm period; the correlation search is capped to periods
+   completing ≥3 cycles. `breathPeriodMs()` then doubles the burst period to the
+   breath cycle only when the envelope proves a genuine subharmonic there:
+   phone-at-mouth breathing produces an **inhale + exhale burst per breath**, so
+   the raw peak cadence is the burst rate (~2× the breath rate), but a cadence
+   is ambiguous (30/min is either 30 breaths with one burst each, or 15 breaths
+   with two). A Hann-windowed **Goertzel** test compares envelope energy at half
+   the cadence vs. the cadence itself (`subharmonicRatio`); the period is
+   doubled only when the half-rate fundamental is present
+   (`subharmonicEnergyRatio = 0.08`), so a real tachypneic 30+ rate is not
+   silently halved to 15. A pristine single-burst rhythm
+   (`corrBurst ≥ singleBurstCorrFloor`) is never doubled.
+8. **Confidence**: low/med/high from peak regularity + periodicity + amplitude.
    Always **insufficient** (never a forced number) when ambient noise is high,
    the audio energy sits outside the band, or the envelope's dominant variation
    is sub-band. Minimum **30 s** usable for a reading; session is 45 s with a
    28 s early finish for high-quality signals.
 
 ### 5.3 Risks
-- Ambient noise swamps breath sounds — noise-floor gate + quiet prompt.
+- Ambient noise swamps breath sounds — 6 s noise-profile calibration +
+  spectral subtraction, a noise-floor gate, and a quiet prompt.
+- Non-stationary noise (talking, alarms) is not captured by the background
+  profile — the noise-floor gate still rejects it.
 - Shallow/irregular breathing in distressed patients lowers amplitude —
   insufficient-signal fallback (same as HR).
 
