@@ -375,7 +375,9 @@ mid-sentence (`finish_reason: "length"`) with no user-facing signal.
 ## ADR-017: Vitals Sensing Module — on-device HR (camera PPG) + RR (microphone)
 
 **Date:** 2026-09-11
-**Status:** Accepted (plan agreed; implementation pending — see `docs/VITALS_SENSING.md`)
+**Status:** Accepted (implemented — pipes + confidence gate + `MonitorStore` +
+shell; on-device smokes green; calibration/pilot still a pre-launch gate) — see
+`docs/VITALS_SENSING.md`
 
 **Context:** The triage walkthrough collects HR/RR by manual entry only
 (`vitals_steps.dart` steppers → `TriageAnswers.heartRate/respiratoryRate`). We
@@ -418,3 +420,66 @@ caregivers without a pulse oximeter/thermometer — offline, zero extra hardware
 - Calibration/pilot (3–5 devices vs a pulse oximeter and manual breath count)
   is a pre-launch gate; any filter/quality-constant change requires a DECISIONS
   entry.
+
+**Implementation notes (2026-09-12, per `docs/VITALS_SENSING.md §5.2`):** RR
+pipeline constants were tuned against synthetic benches and the target device.
+Changes recorded here in lieu of a separate ADR: lags below the 550 Hz
+band-pass's settle-in transient excluded from period detection (`settled window`,
+`detrendSeconds`); an `envelopeSubBandDominant` guard (sub-band RMS vs band RMS)
+to reject 3 cpm envelope drift; a relative `minPeakRatio` echo guard for the
+double-counted 8 cpm near-cutoff ringing; and the **integer-ratio rule** at the
+estimate step — cadence that is an integer *multiple* of the dominant period is
+the rate, cadence that is an integer *divisor* of it is the echo, so the
+dominant (~half) period is the rate. All are tunable constants (`§9.3`);
+synthetic benches must stay green and require a DECISIONS entry to change after pilot.
+
+**Implementation notes (2026-09-12b, HR pilot feedback — `VITALS_SENSING §4.2`):**
+on-device pilot showed the estimate converges with time (±3 bpm by ~18 s vs a
+pulse oximeter) but sessions were ending too early/medium. Tuning recorded here
+in lieu of a separate ADR: HR session lengthened **20 s → 30 s**; beat
+regularity now uses a **trailing 12-IBI window** (placement transients no longer
+drag the whole-session score); early-finish is allowed **only when confidence is
+already high** (medium signals run the full window to converge, then auto-accept
+as medium); the debug panel exposes `reg / corr / amp` so `quality` is auditable
+in the field. A **live camera preview is now shown during the positioning phase**
+(`PpgSampleSource.previewListenable`) so the finger can be verified before the
+timer starts.
+
+**Implementation notes (2026-09-12c, HR pilot tuning):** pilot showed quality
+≈0.62 (medium) with an accurate reading (±3 bpm) still refused as "not enough
+signal" — the failing gate was `dominantPeriod()==null` (band autocorrelation
+< 0.5), i.e. `periodicity()==0` dragged the score and nulled `estimate()`.
+Fit: score reweighted to `0.5·regularity + 0.3·periodicity + 0.2·peakSNR`
+(SNR matters more), and a **weak-autocorrelation fallback** accepts the peak
+cadence when regularity ≥ 0.7 AND quality ≥ medium — a strongly regular beat
+train is its own rhythm evidence, while noise and sub-band signal still fall
+below both bars. New benches: fallback registers a clean train, does NOT rescue
+a noisy one.
+
+**Implementation notes (2026-09-12d, HR supervised calibration — device
+ee783d64):** labeled 3 clean (oximeter 78/82/79) + 3 chaotic (movement)
+readings captured via `tools/hr_log.dart`. Final-instant (30 s) values:
+
+| label | bpm (oxi) | reg | corr | drift | q | result |
+|---|---|---|---|---|---|---|
+| clean | 78.4 (78) | 0.98 | — | 0.3 | 0.56 | ok medium |
+| clean | 80.5 (82) | 0.95 | — | 0.7 | 0.55 | ok medium |
+| clean | 78.7 (79) | 0.97 | — | 2.6 | 0.55 | ok medium |
+| chaotic | 81 (81) | 0.51 | — | 4.8 | 0.31 | insufficient |
+| chaotic | 110    | 0.52 | — | 9.2 | 0.32 | insufficient |
+| chaotic | 77     | 0.67 | — | 7.9 | 0.39 | insufficient |
+
+Clean mean |err| = 0.7 bpm. Before tuning the clean sessions cleared
+medium=0.55 by only 0-0.01; autocorrelation stays below 0.5 on this device
+(corr − always), so clean quality sits at the regularity+SNR floor.
+Changes (all synthetic benches stay green — clean 100 bpm still high, noisy
+still low/null): **qualityMedium 0.55 → 0.45**; new **`maxAcceptableDriftBpm`
+4.0** gate in `confidence()` and in the weak-autocorrelation fallback (drift
+0.3-2.6 clean vs 4.8-9.2 chaotic at the acceptance instant); `tools/hr_log.dart`
+constants mirrored. Result: clean accepted with cushion, 3/3 chaotic rejected.
+
+**Tuning note (2026-09-12e): qualityMedium 0.45 → 0.50.** On-device live
+rechecks showed chaotic readings spike to ~0.48 just before collapsing, while
+a proper reading never drops below 0.50 during the session — so 0.50 rejects
+the spike without touching real readings (clean final-second q 0.55-0.56
+clears it with margin). Kept `maxAcceptableDriftBpm > 4` gate unchanged.

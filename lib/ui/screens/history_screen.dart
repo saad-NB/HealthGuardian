@@ -1,22 +1,29 @@
 import 'package:flutter/material.dart';
 
+import '../../state/app_state.dart';
 import '../../triage/record.dart';
 import '../../triage/record_store.dart';
 import '../theme/app_tokens.dart';
+import 'settings_action.dart';
 
 /// History tab (UI/UX plan §7.7, spec §15/§19-2). Lists completed triages
 /// from the encrypted local store, newest first. Each entry shows the patient
 /// name (when captured at the start) + timestamp; tapping opens a detail card
 /// with the findings, vitals, AI summary and triage, plus an "Ask AI" handoff
-/// that re-opens the chat with the case context attached.
+/// that re-opens the chat with the case context attached. Carries the
+/// top-left Settings gear when [app] is provided (ADR-017).
 class HistoryScreen extends StatefulWidget {
-  const HistoryScreen({super.key, this.store, this.onAskAi});
+  const HistoryScreen({super.key, this.store, this.onAskAi, this.app});
 
   /// Injected in tests; defaults to the real encrypted store.
   final TriageRecordStore? store;
 
   /// Called by the detail card's "Ask AI" button (RootShell switches tabs).
   final void Function(TriageRecord record)? onAskAi;
+
+  /// Shared app state, used for the top-left Settings gear. Optional so tests
+  /// can drive the screen without an [AppState].
+  final AppState? app;
 
   @override
   State<HistoryScreen> createState() => _HistoryScreenState();
@@ -53,6 +60,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 ),
                 child: Row(
                   children: [
+                    if (widget.app != null) ...[
+                      SettingsAction(app: widget.app!),
+                      const SizedBox(width: 4),
+                    ],
                     Text(
                       'Triage history',
                       style: Theme.of(context).textTheme.titleLarge,

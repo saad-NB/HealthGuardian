@@ -198,13 +198,15 @@ String buildRecordContext(TriageRecord r) {
 
   final vitals = (inputs['vitals'] as Map?) ?? const {};
   final v = <String>[
-    if (vitals['rr'] != null) 'RR ${vitals['rr']}/min',
+    if (vitals['rr'] != null)
+      'RR ${vitals['rr']}/min${_provenance(vitals, 'rr')}',
     if (vitals['spo2'] != null)
       'SpO2 ${vitals['spo2']}%'
     else if (vitals['spo2Missing'] == true)
       'SpO2 not available',
     if (vitals['sbp'] != null) 'BP ${vitals['sbp']}',
-    if (vitals['hr'] != null) 'HR ${vitals['hr']}/min',
+    if (vitals['hr'] != null)
+      'HR ${vitals['hr']}/min${_provenance(vitals, 'hr')}',
     if (vitals['temp'] != null)
       'Temp ${vitals['temp']}C'
     else if (vitals['tempMissing'] == true)
@@ -267,4 +269,14 @@ String buildRecordContext(TriageRecord r) {
     b.writeln('NOTE: vitals review required - some measurements were missing.');
   }
   return b.toString();
+}
+
+/// Appends sensor provenance to a rendered vital, e.g. ` · sensor · medium`,
+/// when the value came from the vitals module (VITALS_SENSING §7.2).
+String _provenance(Map<dynamic, dynamic> vitals, String vital) {
+  final source = vitals['${vital}Source'];
+  final confidence = vitals['${vital}Confidence'];
+  if (source == null || source != 'sensor') return '';
+  return ' · sensor'
+      '${confidence == null ? '' : ' · $confidence confidence'}';
 }

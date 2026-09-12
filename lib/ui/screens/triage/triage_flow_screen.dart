@@ -9,6 +9,9 @@ import '../../../triage/models.dart';
 import '../../../triage/record.dart';
 import '../../../triage/record_store.dart';
 import '../../../triage/tier2.dart';
+import '../../../vitals/measurement_session_view.dart';
+import '../../../vitals/models.dart' as vitals;
+import '../../../vitals/sessions.dart';
 import '../../theme/app_tokens.dart';
 import '../../widgets/answer_chip.dart';
 import '../../widgets/question_scaffold.dart';
@@ -312,13 +315,55 @@ class _TriageFlowScreenState extends State<TriageFlowScreen> {
     });
   }
 
-  void _restart() => setState(() {
-        _answers.reset();
-        _nameController.clear();
-        _step = 0;
-        _jumpedToResult = false;
-        _savedFingerprint = null;
+void _restart() => setState(() {
+      _answers.reset();
+      _nameController.clear();
+      _step = 0;
+      _jumpedToResult = false;
+      _savedFingerprint = null;
+    });
+
+  /// "Measure with phone" (VITALS_SENSING §2): runs the shared sensor session
+  /// and, on an accepted reading, fills the engine field + provenance so Tier 1
+  /// scoring works identically to a manual entry.
+  Future<vitals.VitalReading?> _measureVital(vitals.VitalKind kind) async {
+    final session = createMeasurementSession(kind);
+    if (session == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${kind.label} sensing is not available yet.'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+      return null;
+    }
+    final reading = await launchMeasurementSession(
+      context,
+      session: session,
+      cancelLabel: 'Enter manually instead',
+    );
+    if (reading == null) return null;
+    final field = switch (kind) {
+      vitals.VitalKind.heartRate => 'hr',
+      vitals.VitalKind.breathingRate => 'rr',
+    };
+    if (mounted) {
+      setState(() {
+        _answers.recordSensorValue(
+          field,
+          reading.value,
+          vitals.VitalMeasurement(
+            source: vitals.VitalSource.sensor,
+            confidence: reading.confidence,
+            measuredAt: reading.measuredAt,
+          ),
+        );
       });
+    }
+    return reading;
+  }
 
   void _dangerContinue() {
     if (_answers.dangerSigns.isNotEmpty) {
@@ -377,6 +422,8 @@ class _TriageFlowScreenState extends State<TriageFlowScreen> {
           onRefresh: () => setState(() {}),
           onBack: index > 0 ? () => _goTo(index - 1) : null,
           onRestart: _restart,
+          onMeasure: _measureVital,
+          measureSupported: vitalsSensingSupported,
         );
       case ComplaintNode():
         return ComplaintStep(

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../vitals/models.dart' as model;
 import 'burn_profile.dart';
 
 /// Vital-sign scoring scale, driven by the age bracket (spec §3).
@@ -557,6 +558,27 @@ class TriageAnswers {
 
   /// Section D1 chief complaint (§7).
   ChiefComplaint? chiefComplaint;
+
+  /// Provenance for sensor-derived vitals (VITALS_SENSING §7.1): 'hr' / 'rr'
+  /// -> source/confidence/time. Additive — scoring never reads this map.
+  final Map<String, model.VitalMeasurement> measurementMeta = {};
+
+  /// Records a sensor reading into [field]'s value and provenance. Only the
+  /// engine fields change (same values a manual stepper would write), so Tier
+  /// 1 is untouched; provenance is additive metadata.
+  void recordSensorValue(
+    String field,
+    double value,
+    model.VitalMeasurement meta,
+  ) {
+    measurementMeta[field] = meta;
+    switch (field) {
+      case 'hr':
+        heartRate = value;
+      case 'rr':
+        respiratoryRate = value;
+    }
+  }
 
   /// Additional complaints selected on the main-problem menu. The first
   /// selection remains [chiefComplaint] (primary, drives GCS/result display);

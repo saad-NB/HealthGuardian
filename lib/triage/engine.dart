@@ -305,6 +305,11 @@ class TriageEngine {
         'neonatalConsciousness': a.neonatalConsciousness?.stateKey,
         'onOxygen': a.onOxygen,
         'copdCo2Retention': a.copdCo2Retention,
+        'hrSource': a.measurementMeta['hr']?.source.label,
+        'hrConfidence': a.measurementMeta['hr']?.confidence.label.toLowerCase(),
+        'rrSource': a.measurementMeta['rr']?.source.label,
+        'rrConfidence':
+            a.measurementMeta['rr']?.confidence.label.toLowerCase(),
       },
       'gcs': [a.gcsEye, a.gcsVerbal, a.gcsMotor],
       'complaint': a.chiefComplaint?.id,

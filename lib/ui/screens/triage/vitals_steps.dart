@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../triage/models.dart';
+import '../../../vitals/models.dart' as vitals;
 import '../../theme/app_tokens.dart';
 import '../../widgets/answer_chip.dart';
 import '../../widgets/question_scaffold.dart';
@@ -22,6 +23,8 @@ class VitalsStep extends StatelessWidget {
     required this.onRefresh,
     required this.onBack,
     required this.onRestart,
+    this.onMeasure,
+    this.measureSupported,
   });
 
   /// One of: rr, spo2, sbp, hr, temp, onOxygen, copd, avpu, capRefill, feeding.
@@ -39,6 +42,15 @@ class VitalsStep extends StatelessWidget {
   final VoidCallback onRefresh;
   final VoidCallback? onBack;
   final VoidCallback onRestart;
+
+  /// Launches the vitals sensing session for a kind; returns the accepted
+  /// reading or null. Absent on kinds without a sensor path (VITALS_SENSING §2
+  /// "Measure with phone").
+  final Future<vitals.VitalReading?> Function(vitals.VitalKind kind)?
+      onMeasure;
+
+  /// Whether a sensing stack exists for a kind (drives button visibility).
+  final bool Function(vitals.VitalKind kind)? measureSupported;
 
   bool get _neonatal => age.scale == VitalScale.pews;
 
@@ -114,10 +126,10 @@ class VitalsStep extends StatelessWidget {
           ],
           const SizedBox(height: 28),
           switch (field) {
-            'rr' => _rr(),
+            'rr' => _rr(context),
             'spo2' => _spo2(),
             'sbp' => _sbp(),
-            'hr' => _hr(),
+            'hr' => _hr(context),
             'temp' => _temp(),
             'onOxygen' => _onOxygen(),
             'copd' => _copd(),
@@ -179,15 +191,63 @@ class VitalsStep extends StatelessWidget {
     onChanged();
   }
 
-  Widget _rr() {
-    return StepperTiles(
-      value: answers.respiratoryRate ?? (_neonatal ? 48 : 16),
-      onChanged: (v) => _update(() => answers.respiratoryRate = v),
-      min: 4,
-      max: 60,
-      step: 1,
-      unit: '/min',
-      manualMax: 200,
+  /// "Measure with phone" affordance shown above the manual stepper where a
+  /// sensor path exists (VITALS_SENSING §2).
+  Widget? _measureButton(BuildContext context, vitals.VitalKind kind) {
+    final onMeasure = this.onMeasure;
+    final supported = measureSupported?.call(kind) ?? (onMeasure != null);
+    if (onMeasure == null || !supported) return null;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: FilledButton.tonalIcon(
+        onPressed: () async {
+          final reading = await onMeasure(kind);
+          if (reading != null && context.mounted) {
+            ScaffoldMessenger.of(context)
+              ..hideCurrentSnackBar()
+              ..showSnackBar(
+                SnackBar(
+                  content: Text(
+                    '${reading.value.round()} ${kind.shortUnit} '
+                    '(${reading.confidence.label.toLowerCase()} confidence).',
+                  ),
+                  duration: const Duration(seconds: 3),
+                ),
+              );
+          }
+        },
+        icon: const Icon(Icons.monitor_heart, size: 18),
+        label: const Text('Measure with phone'),
+      ),
+    );
+  }
+
+  Widget _rr(BuildContext context) {
+    return _withMeasurer(
+      context,
+      child: StepperTiles(
+        value: answers.respiratoryRate ?? (_neonatal ? 48 : 16),
+        onChanged: (v) => _update(() => answers.respiratoryRate = v),
+        min: 4,
+        max: 60,
+        step: 1,
+        unit: '/min',
+        manualMax: 200,
+      ),
+      kind: vitals.VitalKind.breathingRate,
+    );
+  }
+
+  Widget _withMeasurer(
+    BuildContext context, {
+    required Widget child,
+    required vitals.VitalKind kind,
+  }) {
+    final button = _measureButton(context, kind);
+    if (button == null) return child;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [button, child],
     );
   }
 
@@ -236,18 +296,22 @@ class VitalsStep extends StatelessWidget {
     );
   }
 
-  Widget _hr() {
-    return StepperTiles(
-      value: answers.heartRate ?? (_neonatal ? 140 : 70),
-      onChanged: (v) => _update(() {
-        answers.heartRate = v.round().toDouble();
-      }),
-      min: 20,
-      max: 220,
-      step: 1,
-      unit: 'bpm',
-      manualMin: 1,
-      manualMax: 600,
+  Widget _hr(BuildContext context) {
+    return _withMeasurer(
+      context,
+      child: StepperTiles(
+        value: answers.heartRate ?? (_neonatal ? 140 : 70),
+        onChanged: (v) => _update(() {
+          answers.heartRate = v.round().toDouble();
+        }),
+        min: 20,
+        max: 220,
+        step: 1,
+        unit: 'bpm',
+        manualMin: 1,
+        manualMax: 600,
+      ),
+      kind: vitals.VitalKind.heartRate,
     );
   }
 

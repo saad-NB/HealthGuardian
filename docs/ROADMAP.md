@@ -81,15 +81,16 @@ Items explicitly out of scope for the current MVP. These are intentionally visib
 
 ### v0.5.0 - Vitals Sensing (In Progress)
 Design/approach: `docs/VITALS_SENSING.md` · Decisions: ADR-017.
-- [ ] Scaffold: `camera`/`record`/`permission_handler` deps, CAMERA + RECORD_AUDIO manifest, `lib/vitals/models.dart` + shared `MeasurementSession` (controller + view) + `permissions.dart`
-- [ ] Shell restructure: 4-tab nav (Start · History · Monitor · Ask AI), Settings moved to a top-left icon route, Monitor tab placeholder
-- [ ] Custom HR pipeline (camera PPG): raw frames → red-mean → detrend → band-pass (0.7–3.5 Hz) → peak detection → BPM + quality index
-- [ ] HR integration: "Measure with phone" + confidence gate on the `hr` vital step + Monitor card
-- [ ] Microphone RR pipeline: 16 kHz capture → energy envelope → band-pass (~100–1000 Hz) → cycle detection → RR + quality; noise-floor gate
-- [ ] RR integration: "Measure with phone" on the `rr` vital step + Monitor card
-- [ ] `MonitorStore` (value/confidence/timestamp only) + recent-readings list + in-triage "Use latest reading"
-- [ ] Tests: pure-Dart DSP (synthetic waveforms → expected BPM/RR), session widget tests w/ fake service, monitor-store round-trip, engine regression guard, nav smoke updates
-- [ ] e2e: `monitorVitalsSmoke` scenario w/ adb permission pre-grant; full suite + `flutter analyze` green
+- [x] Scaffold: `camera`/`record`/`permission_handler` deps, CAMERA + RECORD_AUDIO manifest, `lib/vitals/models.dart` + shared `MeasurementSession` (controller + view) + `permissions.dart`
+- [x] Shell restructure: 4-tab nav (Start · History · Monitor · Ask AI), Settings moved to a top-left icon route, Monitor tab placeholder
+- [x] Custom HR pipeline (camera PPG): raw frames → red-mean → detrend → band-pass (0.7–3.5 Hz) → peak detection → BPM + quality index
+- [x] HR integration: "Measure with phone" + confidence gate on the `hr` vital step + Monitor card
+- [x] Microphone RR pipeline: 16 kHz capture → energy envelope → band-pass (~100–1000 Hz) → cycle detection → RR + quality; noise-floor gate
+- [x] RR integration: "Measure with phone" on the `rr` vital step + Monitor card
+- [x] `MonitorStore` (value/confidence/timestamp only) + recent-readings list
+- [x] Tests: pure-Dart DSP (synthetic waveforms → expected BPM/RR), session widget tests w/ fake service, monitor-store round-trip, engine regression guard, nav smoke updates — **309 tests green**
+- [x] e2e: `vitalsHRSmoke` + `vitalsBRSmoke` scenarios w/ adb permission pre-grant (passed on Vivo V2061); full suite + `flutter analyze` green
+- [ ] In-triage "Use latest reading" (pull a stored Monitor reading into the vital step)
 - [ ] Calibration/pilot protocol vs reference (pulse oximeter / manual RR count) on 3–5 devices — pre-launch gate
 
 ### v1.0.0 - MVP Release

@@ -2,13 +2,16 @@ import 'package:flutter/material.dart';
 
 import '../../state/app_state.dart';
 import '../../triage/record.dart';
+import '../../vitals/monitor/monitor_screen.dart';
+import '../../vitals/sessions.dart';
 import 'chat_screen.dart';
 import 'history_screen.dart';
-import 'settings_screen.dart';
 import 'start_screen.dart';
 
-/// App shell (UI/UX plan §5.1): Start / History / Settings + the "Ask AI"
-/// chat (ADR-014). IndexedStack keeps flow state alive across tab switches.
+/// App shell (UI/UX plan §5.1, ADR-016/017): Start / History / Monitor / Ask
+/// AI. Settings is no longer a nav destination — each primary tab shows a
+/// top-left gear ([SettingsAction]) and pushes Settings as a route. Ask AI is
+/// a session carried by the shell; Monitor is the vitals-sensing tab.
 class RootShell extends StatefulWidget {
   const RootShell({super.key, required this.app});
 
@@ -48,6 +51,7 @@ class _RootShellState extends State<RootShell> {
         children: [
           StartScreen(app: widget.app),
           HistoryScreen(
+            app: widget.app,
             onAskAi: (record) {
               final name = record.patientName.isNotEmpty
                   ? record.patientName
@@ -58,7 +62,7 @@ class _RootShellState extends State<RootShell> {
               );
             },
           ),
-          SettingsScreen(app: widget.app),
+          MonitorScreen(app: widget.app, sessionFor: createMeasurementSession),
           ChatScreen(
             app: widget.app,
             patientContext: _chatContext,
@@ -82,9 +86,9 @@ class _RootShellState extends State<RootShell> {
             label: 'History',
           ),
           NavigationDestination(
-            icon: Icon(Icons.settings_outlined),
-            selectedIcon: Icon(Icons.settings),
-            label: 'Settings',
+            icon: Icon(Icons.monitor_heart_outlined),
+            selectedIcon: Icon(Icons.monitor_heart),
+            label: 'Monitor',
           ),
           NavigationDestination(
             icon: Icon(Icons.smart_toy_outlined),

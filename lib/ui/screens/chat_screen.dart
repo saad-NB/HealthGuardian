@@ -7,6 +7,7 @@ import '../../state/app_state.dart';
 import '../../triage/inference_budget.dart';
 import '../text/markdown_lite.dart';
 import '../theme/app_tokens.dart';
+import 'settings_action.dart';
 
 /// Chat surface for MedGemma (ADR-014). Used two ways:
 ///
@@ -182,6 +183,12 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        // As the Ask AI tab (shell) the leading slot is the Settings gear;
+        // when pushed as a route (from a result or History) it's a back arrow.
+        leading: Navigator.of(context).canPop()
+            ? null
+            : SettingsAction(app: widget.app),
+        automaticallyImplyLeading: !Navigator.of(context).canPop(),
         title: Text(_contextAttached
             ? (widget.attachedTitle?.isNotEmpty == true
                 ? widget.attachedTitle!

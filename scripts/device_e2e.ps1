@@ -481,6 +481,21 @@ $scenarios = @(
         @{ assertAbsent = 'Could not respond' },
         @{ tap = 'Clinician verification required' },
         @{ assert = 'Clinician verification required' }
+    )},
+    @{ Name = 'vitalsHRSmoke'; Steps = @(
+        @{ tap = 'Monitor' },                       # bottom nav tab
+        @{ rowTap = 'Fingertip on the rear camera'; ctrl = 'Measure' },
+        @{ assert = 'remaining' },                  # HR session countdown up
+        @{ tap = 'Back' }                           # cancel back to Monitor
+    )},
+    @{ Name = 'vitalsBRSmoke'; Steps = @(
+        @{ tap = 'Monitor' },                       # bottom nav tab
+        @{ rowTap = 'Phone near the mouth or nose'; ctrl = 'Measure' },
+        @{ assert = 'remaining' },                  # RR session countdown up
+        @{ assert = 'quiet' },                      # RR instruction on screen
+        @{ waitFor = 'Try again'; timeout = 90 },   # let 45 s run to insufficient
+        @{ tap = 'Back' },                          # manual-entry fallback
+        @{ assert = 'Phone near the mouth or nose' } # back on Monitor
     )}
 )
 

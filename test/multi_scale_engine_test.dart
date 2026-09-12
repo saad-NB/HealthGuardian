@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:healthguardian/triage/engine.dart';
 import 'package:healthguardian/triage/models.dart';
 import 'package:healthguardian/triage/record.dart';
+import 'package:healthguardian/vitals/models.dart' as vitals;
 
 TriageAnswers _petAdult() {
   return TriageAnswers()
@@ -455,6 +456,77 @@ void main() {
       // Burn 11-19% partial adult → P3, then I1 age bump → P2.
       expect(rec.finalTier, TriageTier.p2);
       expect(rec.modifiers['bumpApplied'], isTrue);
+    });
+  });
+
+  group('Sensor fills (VITALS_SENSING §7)', () {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    final t = DateTime(2026, 9, 12, 10, 30);
+
+    test('recordSensorValue fills the engine field and provenance', () {
+      final a = _petAdult()
+        ..recordSensorValue(
+          'hr',
+          78,
+          vitals.VitalMeasurement(
+            source: vitals.VitalSource.sensor,
+            confidence: vitals.ReadingConfidence.medium,
+            measuredAt: t,
+          ),
+        );
+      expect(a.heartRate, 78);
+      expect(a.measurementMeta['hr']?.source, vitals.VitalSource.sensor);
+      expect(a.measurementMeta['hr']?.confidence,
+          vitals.ReadingConfidence.medium);
+      // rr never overridden when the record targets hr.
+      expect(a.respiratoryRate, 16);
+    });
+
+    test('record carries source/confidence but scoring is unchanged', () {
+      final manual = TriageEngine.compute(_petAdult());
+      final a = _petAdult()
+        ..recordSensorValue(
+          'hr',
+          78,
+          vitals.VitalMeasurement(
+            source: vitals.VitalSource.sensor,
+            confidence: vitals.ReadingConfidence.high,
+            measuredAt: t,
+          ),
+        );
+      // Same value as the manual baseline → identical Tier 1 outcome.
+      expect(TriageEngine.compute(a).tier, manual.tier);
+
+      final rec = TriageEngine.computeRecord(a);
+      final vitalsBox = rec.inputs['vitals'] as Map;
+      expect(vitalsBox['hr'], 78);
+      expect(vitalsBox['hrSource'], 'sensor');
+      expect(vitalsBox['hrConfidence'], 'high');
+    });
+
+    test('record text annotates sensor provenance for Ask AI context', () {
+      final a = _petAdult()
+        ..recordSensorValue(
+          'hr',
+          78,
+          vitals.VitalMeasurement(
+            source: vitals.VitalSource.sensor,
+            confidence: vitals.ReadingConfidence.medium,
+            measuredAt: t,
+          ),
+        );
+      final rec = TriageEngine.computeRecord(a);
+      final ctx = buildRecordContext(rec);
+      expect(ctx, contains('HR 78.0/min'));
+      expect(ctx, contains('· sensor · medium confidence'));
+    });
+
+    test('manual entries carry no provenance', () {
+      final rec = TriageEngine.computeRecord(_petAdult());
+      final vitalsBox = rec.inputs['vitals'] as Map;
+      expect(vitalsBox['hrSource'], isNull);
+      expect(vitalsBox['hrConfidence'], isNull);
+      expect(buildRecordContext(rec), isNot(contains('· sensor')));
     });
   });
 }
