@@ -17,6 +17,7 @@ Sehat Nigraan takes patient vitals, consciousness status (GCS), symptoms, medica
 - [x] Tier 1 rule engine — multi-scale vitals (NEWS2 / Peds-NEWS2 / PEWS), complaint probes, GCS, sepsis qSOFA/pedSIRS, burn TBSA, danger gates, modifier bumps
 - [x] Tier 2 integration — MedGemma triage grade + summary, escalation-only merge (ADR-005), both-flags result display, Ask AI chat with dynamic token budgets
 - [x] Walkthrough UX — patient info first, multi-complaint loop, round-trip/edge-case verified on device (`adb` e2e harness, 9 on-device scenarios)
+- [ ] Vitals Sensing module — on-device HR (camera PPG) + breathing rate (microphone), Monitor tab + in-triage "Measure with phone" (see `docs/VITALS_SENSING.md`, ADR-017)
 
 ## Getting Started
 

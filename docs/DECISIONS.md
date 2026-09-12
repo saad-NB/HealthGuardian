@@ -369,3 +369,52 @@ mid-sentence (`finish_reason: "length"`) with no user-facing signal.
 - All 9 on-device scenarios pass; the sepsis qSOFA path (`qSOFA 1 → P2`), modifier bump (`Age >65` → P4), and Tier 2 (`adultNormalMedGemmaTier2`) are regression-verified against the device.
 - Full suite is now **244 tests** green + `flutter analyze` clean.
 - `extraComplaintNotes` free text flows only to the Tier 2 payload/context block — never the deterministic engine.
+
+---
+
+## ADR-017: Vitals Sensing Module — on-device HR (camera PPG) + RR (microphone)
+
+**Date:** 2026-09-11
+**Status:** Accepted (plan agreed; implementation pending — see `docs/VITALS_SENSING.md`)
+
+**Context:** The triage walkthrough collects HR/RR by manual entry only
+(`vitals_steps.dart` steppers → `TriageAnswers.heartRate/respiratoryRate`). We
+want screening-level measurements from phone sensors for speed and for
+caregivers without a pulse oximeter/thermometer — offline, zero extra hardware.
+
+**Decisions:**
+1. **Custom camera pipeline for HR (no `heart_rate` prototype).** Use the
+   official `camera` plugin for raw frames (flash + exposure/focus/WB lock) and
+   a tunable pure-Dart DSP chain (detrend → band-pass 0.7–3.5 Hz → peak
+   detection → BPM + quality index). Rationale: we need confidence scoring and
+   filter control anyway; a throwaway prototype adds churn for a feature that
+   will be reworked regardless.
+2. **Microphone-first RR** with `record` at 16 kHz (energy envelope →
+   band-pass ~100–1000 Hz → cycle detection → RR + quality, with a noise-floor
+   gate). Accelerometer/gyroscope chest-placement is deferred to v2
+   ("precision mode", `sensors_plus`) until mic accuracy is measured in
+   practice.
+3. **Engine-neutral integration.** Sensor values fill the existing
+   `heartRate` / `respiratoryRate` doubles; provenance lives in additive
+   `measurementMeta` on `TriageAnswers` and in record `inputs`
+   (`hrSource`/`rrConfidence`/…). No engine or record-version change.
+4. **Never-block confidence policy.** Medium/high auto-accept with an
+   indicator; low requires an explicit "Accept anyway"; insufficient-signal and
+   manual entry are always available. No tier score is silently driven by a
+   rejected reading.
+5. **Product placement.** A new **Monitor** bottom-nav tab (Start · History ·
+   Monitor · Ask AI); **Settings moves to a top-left icon** pushed as a route —
+   model management is never advertised in the nav. In-triage, the `hr`/`rr`
+   steps gain "Measure with phone" plus a "Use latest reading" shortcut fed by
+   `MonitorStore`.
+6. **Privacy posture.** Only `{kind, value, confidence, timestamp}` are
+   persisted; raw frames/audio never leave the device (consistent with
+   ADR-014 ephemeral transcripts).
+
+**Consequences:**
+- `docs/VITALS_SENSING.md` is the design/implementation reference (pipeline
+  details, permissions, test + calibration protocol); build order is tracked as
+  a milestone in `docs/ROADMAP.md`.
+- Calibration/pilot (3–5 devices vs a pulse oximeter and manual breath count)
+  is a pre-launch gate; any filter/quality-constant change requires a DECISIONS
+  entry.

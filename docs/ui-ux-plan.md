@@ -162,22 +162,30 @@ Beyond WCAG 2.1 AA, this product adds **emergency-specific** requirements.
 
 ## 5. Information Architecture
 
-### 5.1 Top-level structure (3 tabs)
+### 5.1 Top-level structure (4 tabs)
 
-> **Implementation note (ADR-016):** shipped shell is **Start / History / Settings**; the old Models tab moved under Settings, and **Ask AI** is a session carried by the shell (opened from the result screen or from a History record) rather than a nav destination.
+> **Implementation note (ADR-016/ADR-017):** shipped shell is **Start /
+> History / Monitor / Ask AI**. Settings is **not** a nav destination — it is a
+> top-left gear icon pushed as a route (model management tucks under it).
+> "Ask AI" is a session carried by the shell (opened from results or History),
+> while **Monitor** is the vitals-sensing tab (HR via camera PPG, RR via
+> microphone — see `docs/VITALS_SENSING.md`).
 
 ```
-┌──────────────────────────────────────────────┐
-│  Sehat Nigraan                               │
-├──────────────┬──────────────┬────────────────┤
-│  START       │  HISTORY      │  SETTINGS      │
-│  (triage)    │  (records)    │  (models/app)  │
-└──────────────┴──────────────┴────────────────┘
+┌────────────────────────────────────────────────────┐
+│  ⚙ (top-left)   Sehat Nigraan                       │
+├──────────┬──────────┬──────────┬────────────────────┤
+│  START   │  HISTORY │  MONITOR │      ASK AI        │
+│ (triage) │ (records)│ (vitals  │      (session)     │
+│          │          │  sensing)│                    │
+└──────────┴──────────┴──────────┴────────────────────┘
 ```
 
 - **[Start]** — the default, only screen needed in an emergency. One big "Start Triage / جنچ شروع کریں" button.
 - **[History]** — past sessions, exportable/shareable summary for the clinic. Read-only by default; detail card includes vital chips, complaints, AI summary and an "Ask AI" handoff.
-- **[Settings]** — developer/advanced: model files, download state, app info. Model management is tucked under Settings because a family user must never land there accidentally.
+- **[Monitor]** — on-device vitals sensing: Heart rate and Breathing rate measurement cards + recent-readings list (HR via fingertip on rear camera/flash, RR via nearby microphone).
+- **[Ask AI]** — the LLM session (ephemeral, ADR-014), opened from a result or a History record.
+- **Settings (top-left gear)** — developer/advanced: model files, download state, app info. Pushed as a route so a family user never lands there accidentally.
 
 ### 5.2 Core flow map (triage walkthrough)
 
@@ -334,6 +342,7 @@ Used for RR, SpO₂, SBP, HR, Temp:
 - One parameter per screen (stepper or AVPU tiles).
 - Each shows a realistic range label ("Typical: 12–20") but **never implies normality determines anything**.
 - Vitals summary screen before continuing: a compact recap table with each value + "Change".
+- **HR / RR steps (ADR-017):** a "Measure with phone" action launches the shared measurement session (countdown → confidence → accept/retry/manual); a "Use latest reading" shortcut fills from recent Monitor readings. Manual stepper entry always remains. Low-confidence values require explicit "Accept anyway" and are never silently scored.
 
 ### 7.5 Chief complaint
 - 18-option chip grid (responsive 3-col). Selecting → branch probes.

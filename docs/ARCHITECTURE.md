@@ -79,17 +79,24 @@ lib/
     inference_budget.dart            Token-budget single source of truth (ADR-015)
   ui/
     screens/
-      root_shell.dart                Bottom nav: Start / History / Settings + Ask AI session
+      root_shell.dart                Bottom nav: Start / History / Monitor / Ask AI
+                                     + top-left Settings route (ADR-016/017)
       start_screen.dart              New triage entry
       history_screen.dart            Record list + detail card + Ask AI handoff
-      settings_screen.dart           Settings tab; hosts FilesScreen (model mgmt)
+      settings_screen.dart           Settings (top-left gear route); hosts FilesScreen
       chat_screen.dart               Chat UI vs MedGemma (Ask AI session)
       triage/                        Walkthrough steps (flow, complaints, probes, GCS,
                                      vitals, danger, sepsis, burn, modifiers, result)
     text/markdown_lite.dart          Bullet/bold/italic/code renderer (ADR-015)
     theme/                           App theme + design tokens
     widgets/                         Stepper tiles, segmented Yes/No, chips, banners, etc.
-scripts/device_e2e.ps1               adb harness: 9 on-device e2e scenarios (ADR-016)
+  vitals/                            On-device sensing (ADR-017, docs/VITALS_SENSING.md)
+    measurement_session.*            Shared session state machine + view (HR/RR)
+    dsp/                             Pure-Dart filters (biquad, envelope, peaks, windows)
+    heart_rate/                      Camera PPG: capture + pipeline + service
+    breathing_rate/                  Microphone: capture + pipeline + service
+    monitor/                         Monitor tab UI + compact store (value/confidence/time)
+scripts/device_e2e.ps1               adb harness: 9 triage scenarios + monitor smoke (ADR-016/017)
 docs/
   ARCHITECTURE.md                    This file
   CLINICAL_SOURCES.md                Every scale/threshold with citation
