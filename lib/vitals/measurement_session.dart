@@ -57,8 +57,9 @@ class MeasurementSession extends ChangeNotifier {
   /// When true the session stops at [SessionPhase.positioning] after the
   /// permission check (camera live, no countdown) instead of measuring
   /// immediately — the user positions the sensor and starts on their own tap
-  /// ([beginMeasure]). Heart-rate flow (finger placement) uses this; breathing
-  /// rate starts straight into the countdown.
+  /// ([beginMeasure]). Both flows use this: heart rate parks with the camera
+  /// live for finger placement; breathing rate parks with no sensor running so
+  /// the user can quiet the room and position the phone first.
   final bool positionsFirst;
 
   /// Starts the sensor for the positioning phase (e.g. camera on for preview).

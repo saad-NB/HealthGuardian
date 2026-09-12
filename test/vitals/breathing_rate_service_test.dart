@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:healthguardian/vitals/breathing_rate/breath_capture.dart';
 import 'package:healthguardian/vitals/breathing_rate/breathing_rate_service.dart';
@@ -130,5 +132,60 @@ void main() {
     expect(events.single, isA<MeasurementFailed>());
     expect((events.single as MeasurementFailed).reason,
         contains('microphone'));
+  });
+
+  test('success emits per-second progress + an "ok" HG_RR final line',
+      () async {
+    final lines = <String>[];
+    final prev = debugPrint;
+    debugPrint = (String? message, {int? wrapWidth}) =>
+        lines.add(message ?? '');
+    addTearDown(() => debugPrint = prev);
+
+    final service = BreathingRateService(
+      config: short,
+      sourceFactory: () => _FakeBreathSource(_synth(cpm: 15, seconds: 14)),
+    );
+    await service.run().toList();
+
+    final log = lines
+        .where((l) => l.startsWith('HG_RR '))
+        .map(
+          (l) => (jsonDecode(l.substring('HG_RR '.length)) as Map)
+              .cast<String, Object?>(),
+        )
+        .toList();
+    expect(log, isNotEmpty);
+    expect(log.any((e) => e['type'] == 'p' && e['q'] is num), isTrue);
+    final fin = log.lastWhere((e) => e['type'] == 'f');
+    expect(fin['outcome'], 'ok');
+    expect(fin['cpm'], isNotNull);
+    expect(fin['usable'], isNotNull);
+  });
+
+  test('loud room emits an insufficient HG_RR final with reason noisy',
+      () async {
+    final service = BreathingRateService(
+      config: short,
+      sourceFactory: () => _FakeBreathSource(
+        _synth(cpm: 15, seconds: 12, amplitude: 1e-6, ambient: 0.09),
+      ),
+    );
+    final lines = <String>[];
+    final prev = debugPrint;
+    debugPrint = (String? message, {int? wrapWidth}) =>
+        lines.add(message ?? '');
+    addTearDown(() => debugPrint = prev);
+    await service.run().toList();
+
+    final f = lines
+        .where((l) => l.startsWith('HG_RR '))
+        .map(
+          (l) => (jsonDecode(l.substring('HG_RR '.length)) as Map)
+              .cast<String, Object?>(),
+        )
+        .lastWhere((e) => e['type'] == 'f');
+    expect(f['outcome'], 'insufficient');
+    expect(f['reason'], 'noisy');
   });
 }

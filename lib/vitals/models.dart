@@ -22,8 +22,8 @@ enum VitalKind {
     shortUnit: 'breaths/min',
     sessionSeconds: 45,
     instruction:
-        'Place the phone near the patient\'s mouth or nose and keep the room '
-        'quiet. Do not hold the phone against the chest yet.',
+        'Put the phone\'s microphone near your mouth or nose and breathe '
+        'normally. Keep the room quiet during the countdown.',
   );
 
   const VitalKind({

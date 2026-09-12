@@ -238,5 +238,41 @@ void main() {
       expect(session.message, contains('no rear camera'));
       session.dispose();
     });
+
+    test('breathing rate parks in positioning with no positioning sensor',
+        () async {
+      // RR's positionsFirst uses NO beginPositioning/endPositioning — the mic
+      // only starts once "Start measuring" fires the measurement service.
+      var runs = 0;
+      late StreamController<MeasurementEvent> controller;
+      final session = MeasurementSession(
+        kind: VitalKind.breathingRate,
+        ensureAccess: (_) async => true,
+        run: () {
+          runs++;
+          controller = StreamController<MeasurementEvent>();
+          return controller.stream;
+        },
+        positionsFirst: true,
+      );
+      session.start();
+      await Future<void>.delayed(Duration.zero);
+      expect(session.phase, SessionPhase.positioning);
+      expect(runs, 0); // mic/countdown not started yet
+
+      session.beginMeasure();
+      await Future<void>.delayed(Duration.zero);
+      expect(session.phase, SessionPhase.measuring);
+      expect(runs, 1);
+      expect(controller.hasListener, isTrue);
+      controller.add(const MeasurementProgress(2));
+      await Future<void>.delayed(Duration.zero);
+      expect(session.elapsedSeconds, 2);
+
+      await session.cancel();
+      expect(session.phase, SessionPhase.cancelled);
+      await controller.close();
+      session.dispose();
+    });
   });
 }

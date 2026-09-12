@@ -1,4 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart' show debugPrint;
 
 import '../models.dart';
 import 'breath_capture.dart';
@@ -55,6 +58,47 @@ class BreathingRateService {
 
   Stream<MeasurementEvent> run() => _measure();
 
+  /// One line of `debugPrint` output -> `adb logcat` (tag "flutter").
+  /// `tools/hr_log.dart` collects and analyzes HG_RR lines to recalibrate the
+  /// confidence gates from real device signal and to see WHICH gate killed a
+  /// reading (VITALS_SENSING §4.2 "diagnostics", DECISIONS).
+  Map<String, Object?> _logEntry({
+    required String type,
+    required int sec,
+    Object? outcome,
+    Object? cpm,
+    Object? confidence,
+    String? reason,
+  }) {
+    final d = _pipeline.debugSnapshot();
+    return {
+      'v': 1,
+      'type': type,
+      'sec': sec,
+      'outcome': outcome,
+      'cpm': cpm ?? (d['cpm'] == '—' ? null : num.tryParse(d['cpm']!)),
+      'conf': confidence,
+      'reg': num.tryParse(d['reg']!),
+      'corr': num.tryParse(d['corr']!),
+      'amp': num.tryParse(d['amp']!),
+      'q': num.tryParse(d['quality']!),
+      'usable': d['usable'] == '—'
+          ? null
+          : int.tryParse(d['usable']!.replaceAll('s', '')),
+      'ibis': num.tryParse(d['ibis']!),
+      'lag': d['lag_ms'] == '—' ? null : num.tryParse(d['lag_ms']!),
+      'peaks': int.tryParse(d['peaks']!),
+      'peak': d['peak_amp'] == '—' ? null : num.tryParse(d['peak_amp']!),
+      'band': num.tryParse(d['band_rms']!),
+      'raw': num.tryParse(d['raw']!),
+      'breath': d['breath'] == 'yes',
+      'noisy': d['noisy'] == 'yes',
+      'sub': d['sub_band'] == 'yes',
+      'env_sub': d['env_sub'] == 'yes',
+      'reason': ?reason,
+    };
+  }
+
   Stream<MeasurementEvent> _measure() async* {
     final clock = Stopwatch()..start();
     final source = _sourceFactory();
@@ -62,6 +106,8 @@ class BreathingRateService {
     try {
       await source.start();
     } catch (e) {
+      debugPrint(
+          'HG_RR ${jsonEncode(_logEntry(type: 'f', sec: 0, outcome: 'failed'))}');
       yield MeasurementFailed('Could not start the microphone: $e');
       return;
     }
@@ -79,6 +125,9 @@ class BreathingRateService {
         lastSecond = sec;
 
         final est = _pipeline.estimate();
+        debugPrint(
+          'HG_RR ${jsonEncode(_logEntry(type: 'p', sec: sec, cpm: est?.cpm))}',
+        );
         yield MeasurementProgress(
           sec.toDouble(),
           instantValue: est?.cpm,
@@ -95,6 +144,23 @@ class BreathingRateService {
 
     final est = _pipeline.estimate();
     if (est == null || est.usableSeconds < _config.minUsableSeconds) {
+      final reason = _pipeline.ambientNoisy
+          ? 'noisy'
+          : _pipeline.subBandDominant
+              ? 'sub'
+              : _pipeline.envelopeSubBandDominant
+                  ? 'env_sub'
+                  : est == null
+                      ? (_pipeline.hasBreath ? 'no-validate' : 'no-breath')
+                      : 'short';
+      debugPrint(
+        'HG_RR ${jsonEncode(_logEntry(
+          type: 'f',
+          sec: lastSecond.clamp(0, 99999),
+          outcome: 'insufficient',
+          reason: reason,
+        ))}',
+      );
       yield MeasurementInsufficient(
         _pipeline.ambientNoisy
             ? 'The room is too loud to count breaths. Keep the surroundings '
@@ -108,6 +174,15 @@ class BreathingRateService {
       return;
     }
 
+    debugPrint(
+      'HG_RR ${jsonEncode(_logEntry(
+        type: 'f',
+        sec: lastSecond.clamp(0, 99999),
+        outcome: 'ok',
+        cpm: est.cpm,
+        confidence: est.confidence.toString(),
+      ))}',
+    );
     yield MeasurementSuccess(
       VitalReading(
         kind: VitalKind.breathingRate,

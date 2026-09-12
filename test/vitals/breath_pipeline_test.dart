@@ -37,6 +37,31 @@ Float64List synthBreath({
   return out;
 }
 
+/// Synthetic PCM with two energy bursts per breath (inhale + exhale, unequal
+/// and slightly noisy) — what a phone at the mouth/nose actually hears.
+Float64List synthTwoBurstBreath({
+  required double cpm,
+  required double seconds,
+  int seed = 5,
+}) {
+  final n = (seconds * _sampleRateHz).round();
+  final out = Float64List(n);
+  final f = cpm / 60;
+  final rng = math.Random(seed);
+  double bump(double phase, double c, double w) =>
+      math.exp(-(((phase - c) / w) * ((phase - c) / w)));
+  for (var i = 0; i < n; i++) {
+    final t = i / _sampleRateHz;
+    final phase = (t * f) % 1.0;
+    final env = 0.04 *
+        (0.15 + 0.9 * bump(phase, 0.25, 0.10) + 0.6 * bump(phase, 0.70, 0.12));
+    var v = math.sin(2 * math.pi * 550 * t) * env;
+    v += 0.004 * (rng.nextDouble() * 2 - 1);
+    out[i] = v;
+  }
+  return out;
+}
+
 void feed(BreathPipeline p, Float64List pcm,
     {int chunk = 2048, double startSeconds = 0}) {
   for (var off = 0; off < pcm.length; off += chunk) {
@@ -58,6 +83,22 @@ void main() {
       expect(est!.cpm, closeTo(15, 2));
       expect(est.confidence, isNot(ReadingConfidence.low));
       expect(est.usableSeconds, greaterThanOrEqualTo(28));
+    });
+
+    test('startup silence does not poison the envelope (regression)', () {
+      // Real captures begin with silent/zero frames. There env and detrend are
+      // both 0, so env/det was NaN — and one NaN in the recursive envelope
+      // filter's delay line produced zero peaks for the entire session no
+      // matter how clean the breathing was.
+      final p = BreathPipeline();
+      feed(p, Float64List(_sampleRateHz.round())); // 1 s of silence
+      feed(p, synthBreath(cpm: 15, seconds: 44), startSeconds: 1);
+      expect(p.hasBreath, isTrue);
+      expect(p.ibiCount, greaterThan(3));
+      expect(p.qualityScore(), greaterThan(0.5));
+      final est = p.estimate();
+      expect(est, isNotNull);
+      expect(est!.cpm, closeTo(15, 3));
     });
 
     test('bradypneic 8 cpm still resolves', () {
@@ -87,6 +128,19 @@ void main() {
       if (est != null) {
         // Only a figure near the real rate survives the guard, never ~16.
         expect(est.cpm, closeTo(8, 2));
+      }
+    });
+
+    test('two-burst breathing reports the breath rate, not the burst rate', () {
+      // A phone at the mouth/nose hears an inhale and an exhale burst per
+      // breath, so the raw peak cadence is ~2x the breath rate. The pipeline
+      // must fold the subharmonic back down.
+      for (final cpm in [10.0, 15.0, 18.0]) {
+        final p = BreathPipeline();
+        feed(p, synthTwoBurstBreath(cpm: cpm, seconds: 45));
+        final est = p.estimate();
+        expect(est, isNotNull);
+        expect(est!.cpm, closeTo(cpm, 3));
       }
     });
 

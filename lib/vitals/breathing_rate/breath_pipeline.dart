@@ -47,6 +47,9 @@ class BreathConfig {
     this.subBandRatioThreshold = 0.25,
     this.minAutocorrelation = 0.5,
     this.cadenceHarmonicTolerance = 0.3,
+    this.minDominantCycles = 3,
+    this.singleBurstCorrFloor = 0.95,
+    this.doubleBurstCorrMargin = 0.2,
   });
 
   /// Microphone sample rate.
@@ -116,6 +119,21 @@ class BreathConfig {
   /// autocorrelation-dominant period (0..1) — rejects envelope double-bursts
   /// and detector jitter that would otherwise halve/double the rate.
   final double cadenceHarmonicTolerance;
+
+  /// Minimum number of full cycles a candidate dominant period must complete
+  /// inside the correlation window before it can be trusted. Slow envelope
+  /// drift (handling, a phone settling) only completes ~2 cycles in the 30 s
+  /// window yet can out-correlate the real breath rhythm; requiring 3+ cycles
+  /// rejects it while still covering down to ~6 cpm.
+  final int minDominantCycles;
+
+  /// Above this envelope periodicity the burst cadence is treated as a clean
+  /// single-burst rhythm (synthetic/ideal) and not doubled to a subharmonic.
+  final double singleBurstCorrFloor;
+
+  /// How close (in correlation) the doubled lag must be to the burst lag for
+  /// the doubled period to be accepted as the true breath cycle.
+  final double doubleBurstCorrMargin;
 }
 
 /// Real-time microphone -> RR (breaths/min) processor. Framework-free: the
@@ -196,10 +214,48 @@ class BreathPipeline {
   double? _lastCpm;
   bool _everHadBreath = false;
 
+  double _lastUnit = 0;
+  double _lastBand = 0;
+
   /// Continuous usable signal coverage so far (seconds).
   int get usableSeconds => _usableSeconds;
 
   double? get lastCpm => _lastCpm;
+
+  int get ibiCount => _ibis.length;
+
+  double? _corrAtLagMs(double lagMs) {
+    final envHz = 1000 / _c.envelopeMs;
+    final k = (lagMs * envHz / 1000).round();
+    if (k < 1) return null;
+    return _acorrAt(k);
+  }
+
+  /// The breath period (ms): the burst period from the peak train, doubled
+  /// when the envelope shows a genuine subharmonic there.
+  ///
+  /// Breathing with the phone at the mouth/nose produces two energy bursts per
+  /// breath (inhale + exhale), so the peak train's cadence is the *burst* rate
+  /// — roughly twice the breath rate. When the envelope's autocorrelation at
+  /// twice the burst period is nearly as strong as at the burst period (and
+  /// the burst period is not a pristine single-burst rhythm), the slower period
+  /// is the true breath cycle.
+  double? breathPeriodMs() {
+    final burst = peakTrainPeriodMs();
+    if (burst == null || burst <= 0) return null;
+    final doubled = 2 * burst;
+    final corrBurst = _corrAtLagMs(burst);
+    final corrDouble = _corrAtLagMs(doubled);
+    final withinBand = doubled <= 60000 / _c.cpmMin;
+    if (withinBand &&
+        corrBurst != null &&
+        corrDouble != null &&
+        corrBurst < _c.singleBurstCorrFloor &&
+        corrDouble >= corrBurst - _c.doubleBurstCorrMargin) {
+      return doubled;
+    }
+    return burst;
+  }
 
   bool get hasBreath => _everHadBreath;
 
@@ -238,6 +294,10 @@ class BreathPipeline {
     // normalises too — otherwise the first few seconds of envelope oscillation
     // would be invisible and usable coverage would systematically under-read.
     final det = _detrend.update(env) ?? _runningMean(env);
+    // Startup silence: env and det are both 0, so env/det would be NaN — and a
+    // single NaN poisons the IIR cascade's delay line for the rest of the
+    // session (NaN never leaves a recursive filter). Skip the frame instead.
+    if (!det.isFinite || det <= 1e-9) return;
     final norm = env / det;
     final unit = (norm - 1) * 1000; // fractional change, in parts-per-thousand
 
@@ -246,6 +306,8 @@ class BreathPipeline {
     final hp1 = unit - _hp.process(unit);
     final high = hp1 - _hp2.process(hp1);
     final band = _envLp.process(high);
+    _lastUnit = unit;
+    _lastBand = band;
     _envUnitRms.update(unit);
     _envBandRms.update(band);
     if (timestampMs >= _envWindowStartMs && timestampMs <= _envWindowEndMs) {
@@ -254,13 +316,16 @@ class BreathPipeline {
 
     final peak = _peaks.update(timestampMs: timestampMs, value: band);
     if (peak == null) return;
+    final amp = peak.amplitude.abs();
     // Echo guard: the band-pass cascade leaves a low-amplitude ripple right
     // after each real crest; an absolute minHeight can't see it. Require the
     // confirmed peak to reach a meaningful fraction of recently-accepted
     // breathe amplitudes before counting it (VITALS_SENSING §5.3 robustness).
-    if (peak.amplitude < _c.minPeakRatio * _acceptedAmpFloor) return;
+    // The reference is an EMA (not a running max) so a single startup
+    // transient can't permanently reject every real breath that follows.
     _acceptedAmpFloor =
-        math.max(peak.amplitude, 0.85 * _acceptedAmpFloor);
+        _acceptedAmpFloor <= 0 ? amp : 0.7 * _acceptedAmpFloor + 0.3 * amp;
+    if (amp < _c.minPeakRatio * _acceptedAmpFloor) return;
     _everHadBreath = true;
     _onPeak(peak);
   }
@@ -278,6 +343,14 @@ class BreathPipeline {
   double _envWindowEndMs = double.maxFinite;
 
   double _runningMean(double env) {
+    // Seed at the first meaningful level: leading silence would otherwise drag
+    // the mean toward zero, inflating the first real frame into a huge
+    // transient (and, via the echo floor, rejecting every breath after it).
+    if (_warmCount == 0 || (_warmMean <= 0 && env > 0)) {
+      _warmMean = env;
+      _warmCount = 1;
+      return _warmMean;
+    }
     _warmCount++;
     _warmMean += (env - _warmMean) / _warmCount;
     return _warmMean;
@@ -327,6 +400,13 @@ class BreathPipeline {
   /// noise), and an envelope-SNR term. 0 until at least three breaths exist.
   double qualityScore() {
     if (_ibis.length < 3) return 0;
+    return 0.6 * regularity() + 0.3 * periodicity() + 0.1 * amplitudeFactor();
+  }
+
+  /// Breath-interval regularity in 0..1 (1 - MAD/median coefficient of
+  /// variation) — the dominant quality term.
+  double regularity() {
+    if (_ibis.length < 3) return 0;
     final median = _medianIbiMs!;
     final deviations = _ibis.map((i) => (i - median).abs()).toList()..sort();
     final mad = deviations.length.isEven
@@ -335,19 +415,80 @@ class BreathPipeline {
             2
         : deviations[deviations.length ~/ 2];
     final cv = mad / median;
-    final regularity = (1 - cv).clamp(0.0, 1.0);
+    return (1 - cv).clamp(0.0, 1.0);
+  }
 
+  /// Mean confirmed-breath amplitude vs. 4x passband RMS, in 0..1 — the
+  /// envelope-SNR term (small for noise, larger for clean breath bursts).
+  double amplitudeFactor() {
     final r = _audioBandRms.value;
-    final ampFactor = r != null && r > 1e-9
+    return r != null && r > 1e-9
         ? (_meanPeakAmp / (4 * r)).clamp(0.0, 1.0)
         : 0.0;
-
-    return 0.6 * regularity + 0.3 * periodicity() + 0.1 * ampFactor;
   }
 
   /// Normalized autocorrelation of the band-passed envelope at the dominant
   /// breath period. ≈1 for true periodic breathing; ≈0 for noise.
   double periodicity() => dominantPeriod()?.corr ?? 0;
+
+  /// Normalized autocorrelation of the envelope at the peak-derived cadence
+  /// (the median inter-breath interval). High when the detected peaks sit on a
+  /// real envelope period; low when they are filter echoes.
+  double? cadenceCorrelation() {
+    final m = _medianIbiMs;
+    if (m == null) return null;
+    final envHz = 1000 / _c.envelopeMs;
+    final k = (m * envHz / 1000).round();
+    if (k < 1) return null;
+    return _acorrAt(k);
+  }
+
+  /// The fundamental breath period (ms) inferred from the peak train alone.
+  ///
+  /// The envelope autocorrelation is easily captured by slow drift, but the
+  /// detected peaks carry no drift. A real breath yields either one crest per
+  /// cycle (regular intervals) or a repeated short/long pair (a crest plus a
+  /// filter echo, e.g. [1080, 6390, 1170, 6600, ...] whose pair sums to the
+  /// breath period). The median interval is robust to a lone echo; only when
+  /// the intervals genuinely alternate does it fall to the echo's half-period,
+  /// and there the pair sum (2× mean) recovers the true period.
+  double? peakTrainPeriodMs() {
+    final n = _ibis.length;
+    if (n == 0) return null;
+    final sorted = [..._ibis]..sort();
+    final median = sorted[n ~/ 2];
+    if (n < 6) return median;
+    final alternating = _ibiAcorrAt(1) < -0.3 && _ibiAcorrAt(2) >= 0.5;
+    if (alternating) {
+      final mean = _ibis.reduce((a, b) => a + b) / n;
+      return 2 * mean;
+    }
+    return median;
+  }
+
+  double _ibiAcorrAt(int lag) {
+    final n = _ibis.length;
+    final m = n - lag;
+    if (m <= 1) return 0;
+    var ma = 0.0, mb = 0.0;
+    for (var i = 0; i < m; i++) {
+      ma += _ibis[i];
+      mb += _ibis[i + lag];
+    }
+    ma /= m;
+    mb /= m;
+    var xy = 0.0, xx = 0.0, yy = 0.0;
+    for (var i = 0; i < m; i++) {
+      final a = _ibis[i] - ma;
+      final b = _ibis[i + lag] - mb;
+      xy += a * b;
+      xx += a * a;
+      yy += b * b;
+    }
+    if (xx == 0 || yy == 0) return 0;
+    final r = xy / math.sqrt(xx * yy);
+    return r < -1 ? -1.0 : (r > 1 ? 1.0 : r);
+  }
 
   /// The lag (ms) and correlation of the strongest autocorrelation peak over
   /// plausible breath periods (cpmMin-cpmMax). Null when too noise-driven.
@@ -360,6 +501,11 @@ class BreathPipeline {
     // A session shorter than the slowest period shouldn't stop us measuring
     // faster rhythms: clamp the search to lags the window can actually hold.
     if (maxKs >= vals.length) maxKs = vals.length - 1;
+    // Reject slow drift: a candidate period must complete at least
+    // [minDominantCycles] cycles in the window. A 14 s wander over a 30 s
+    // window only manages ~2 and can out-correlate the real breath rhythm.
+    final cycleCap = vals.length ~/ _c.minDominantCycles;
+    if (maxKs > cycleCap) maxKs = cycleCap;
     if (maxKs <= minKs) return null;
 
     // Global best correlation and lag.
@@ -439,35 +585,46 @@ class BreathPipeline {
     return ReadingConfidence.low;
   }
 
+  /// Live diagnostics snapshot for the debug panel (label -> value). Mirrors
+  /// PpgPipeline.debugSnapshot so the supervised log tool (VITALS_SENSING
+  /// §4.2) can separate clean from face-obscured/ambient sessions.
+  Map<String, String> debugSnapshot() {
+    final dom = dominantPeriod();
+    return {
+      'breath': _everHadBreath ? 'yes' : 'no',
+      'peaks': '$_peakCount',
+      'ibis': '${_ibis.length}',
+      'usable': '${_usableSeconds}s',
+      'cpm': _lastCpm?.toStringAsFixed(1) ?? '—',
+      'ibi_ms': _medianIbiMs?.toStringAsFixed(0) ?? '—',
+      'peak_amp': _meanPeakAmp.toStringAsFixed(2),
+      'band_rms': (_audioBandRms.value ?? 0).toStringAsFixed(3),
+      'raw': (_audioRawRms.value ?? 0).toStringAsFixed(4),
+      'envunit': _lastUnit.toStringAsFixed(1),
+      'envband': _lastBand.toStringAsFixed(1),
+      'lag_ms': dom?.lagMs.toStringAsFixed(0) ?? '—',
+      'corr': dom?.corr.toStringAsFixed(2) ?? '—',
+      'cad_corr': cadenceCorrelation()?.toStringAsFixed(2) ?? '—',
+      'reg': regularity().toStringAsFixed(2),
+      'amp': amplitudeFactor().toStringAsFixed(2),
+      'noisy': ambientNoisy ? 'yes' : 'no',
+      'sub_band': subBandDominant ? 'yes' : 'no',
+      'env_sub': envelopeSubBandDominant ? 'yes' : 'no',
+      'quality': qualityScore().toStringAsFixed(2),
+    };
+  }
+
   /// Current estimate; null before enough breaths exist — or when the room is
-  /// noisy, the true rhythm can't be trusted, or the peak cadence isn't an
-  /// integer ratio of the dominant period.
+  /// noisy, the signal is out of band, or no stable peak rhythm was found.
   BreathEstimate? estimate() {
     if (ambientNoisy || subBandDominant || envelopeSubBandDominant) return null;
-    final lastCpm = _lastCpm;
-    if (lastCpm == null) return null;
+    if (_ibis.length < 3) return null;
 
-    final dominant = dominantPeriod();
-    if (dominant == null) return null;
-    // The peak cadence must relate to the autocorrelation-dominant period by
-    // an integer ratio — an integer MULTIPLE means the cadence is the true
-    // rhythm (e.g. HR's dicrotic double-count at 2x), while an integer
-    // DIVISOR means the envelope produced more than one crest per breath (the
-    // band-pass cascade echoes slow cycles near its cutoff), so the dominant
-    // period itself is the rate. Anything else is noise-driven → no estimate.
-    final k = _medianIbiMs! / dominant.lagMs;
-    final multiple = k.round();
-    final cadenceIsRhythm = multiple >= 1 &&
-        (k - multiple).abs() <= _c.cadenceHarmonicTolerance;
-    final divisor = 1 / k; // dominant period expressed in peak intervals
-    final divisorRounded = divisor.round();
-    final dominantIsRhythm = k > 0 &&
-        (divisor - divisorRounded).abs() <= _c.cadenceHarmonicTolerance;
-    if (!cadenceIsRhythm && !dominantIsRhythm) return null;
-
-    final cpm = cadenceIsRhythm
-        ? 60000 / _medianIbiMs!
-        : 60000 / dominant.lagMs;
+    // Rate comes from the peak train (drift-free); the envelope's periodicity
+    // is folded in via [confidence] rather than overriding the measured rate.
+    final periodMs = breathPeriodMs();
+    if (periodMs == null || periodMs <= 0) return null;
+    final cpm = 60000 / periodMs;
 
     var conf = confidence();
     String? note;

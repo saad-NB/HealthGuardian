@@ -147,12 +147,20 @@ class _MeasurementSessionScreenState extends State<MeasurementSessionScreen> {
         return _pillar(
           child: Column(
             children: [
-              _livePreview(wide: true),
-              const SizedBox(height: 20),
+              if (kind == VitalKind.heartRate) ...[
+                _livePreview(wide: true),
+                const SizedBox(height: 20),
+              ] else ...[
+                const Icon(Icons.mic_none, size: 56, color: AppColors.teal700),
+                const SizedBox(height: 12),
+              ],
               Text(
-                'Place your fingertip firmly over the rear camera and flash, '
-                'then tap Start measuring. The countdown only begins once the '
-                'signal is good.',
+                kind == VitalKind.heartRate
+                    ? 'Place your fingertip firmly over the rear camera and '
+                        'flash, then tap Start measuring. The countdown only '
+                        'begins once the signal is good.'
+                    : 'Place the phone near your mouth or nose and keep the '
+                        'room quiet, then tap Start measuring.',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodyLarge,
               ),

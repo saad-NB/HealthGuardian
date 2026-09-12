@@ -44,5 +44,9 @@ MeasurementSession? createMeasurementSession(VitalKind kind) {
     kind: kind,
     ensureAccess: permissions.ensure,
     run: () => BreathingRateService().run(),
+    // Also park before the countdown for breathing rate (no sensor starts
+    // during positioning — the user preps the room and the phone, then taps
+    // "Start measuring" on their own).
+    positionsFirst: true,
   );
 }

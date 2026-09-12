@@ -143,8 +143,15 @@ confidence scoring anyway.
       distributions, a threshold search that best separates the groups
       (0/5 misclassifications = well-separated), FP/FN counts at the current
       medium threshold, and a suggested `qualityMedium` = midpoint of the
-      clean/noisy gap — each change gated by a DECISIONS entry after
-      confirmations.
+clean/noisy gap — each change gated by a DECISIONS entry after
+       confirmations.
+   - **Breathing-rate diagnostics:** `BreathingRateService` mirrors this with
+      `HG_RR` JSON lines (fields `cpm, reg, corr, amp, q, usable, ibis, lag,
+      breath, noisy, sub, env_sub`) and a final line carrying the
+      insufficient `reason` — `noisy` / `sub` / `env_sub` / `no-validate`
+      (breaths found but cadence↔period agreement failed) / `no-breath` /
+      `short` — so `tools/hr_log.dart analyze --label --tag HG_RR` pinpoints
+      which gate kills a real device reading (DECISIONS 2026-09-12f).
 - **Position-then-start (HR):** the session parks in a `positioning` phase
       once the camera is live — the user places the fingertip and taps
       **Start measuring**, and only then does the 30 s countdown begin. Reliable
@@ -223,24 +230,32 @@ proves insufficient in practice.
    suppresses speech high-frequencies, mains hum, and rumble.
 3. **Envelope** (`rms.dart`): short-time RMS over **30 ms** frames of the band
    signal; normalised by a moving detrend so gain offsets don't dominate (a
-   running mean bridges the detrend's warm-up so the first seconds count).
+   running mean bridges the detrend's warm-up so the first seconds count). The
+   running mean is seeded at the first nonzero level and frames with a
+   zero/near-zero denominator are skipped — a real capture starts with silent
+   frames, and `0/0` would inject a NaN that permanently poisons the recursive
+   envelope filters (`biquad.dart` also self-heals on non-finite state).
 4. **Envelope band-pass** ~0.07–1 Hz: two cascaded low-pass subtractions cut
    the sub-band drift that otherwise masquerades as slow breathing (the 3 bpm
    guard), then an LP at 1 Hz kills ripple. Envelope values captured before the
    detrend window fills are the cascade's settle-in transient and are excluded
    from period detection.
-5. **Cycle detection** (`peak_detect.dart`): one peak per breath — a hard
-   refractory (= 60 bpm ceiling), a deep **fall ratio (0.35)** so rounded
-   envelope crests and inhale/exhale splits don't double-count, and an **echo
-   guard** that drops peaks below ~12% of the recent-accepted amplitude
-   (low-amplitude filter ringing). Median inter-breath interval (IBI) → RR.
-6. **Period check:** the peak cadence must be an integer ratio of the
-   autocorrelation-dominant envelope period. A cadence that is an integer
-   *divisor* of the dominant period means the band-pass echoed each slow cycle
-   (bradypnea), so the dominant period itself is the rate; an integer
-   *multiple* is normal (cadence is the rate). Anything else is noise → no
-   estimate. The correlation runs on the settled envelope only (mean-centred,
-   shortest strong lag wins).
+5. **Cycle detection** (`peak_detect.dart`): a hard refractory (= 60 bpm
+   ceiling), a deep **fall ratio (0.35)** so rounded envelope crests and
+   inhale/exhale splits don't double-count, and an **echo guard** that drops
+   peaks below ~12% of the recent-accepted amplitude (an EMA, so one startup
+   transient can't reject every later breath). Median inter-breath interval
+   (IBI) → RR.
+6. **Rate from the peak train** (drift-free): `peakTrainPeriodMs()` uses the
+   median IBI, or the pair sum when the intervals alternate short/long from
+   filter echoes. The envelope autocorrelation's global maximum is *not* used to
+   override this — slow envelope drift (~14 s, only ~2 cycles in the window)
+   otherwise masquerades as a strong 4 cpm period; the correlation search is
+   capped to periods completing ≥3 cycles. `breathPeriodMs()` then doubles the
+   burst period to the breath cycle when the autocorrelation at **2× the burst
+   period** is nearly as strong as at the burst period: phone-at-mouth breathing
+   produces an **inhale + exhale burst per breath**, so the raw peak cadence is
+   the burst rate (~2× the breath rate).
 7. **Confidence**: low/med/high from peak regularity + periodicity + amplitude.
    Always **insufficient** (never a forced number) when ambient noise is high,
    the audio energy sits outside the band, or the envelope's dominant variation

@@ -1,25 +1,26 @@
-// HR calibration log tool (supervised).
+// HR/RR calibration log tool (supervised).
 //
 // The app emits one JSON diagnostic line per measuring second under the
-// `HG_HR` tag (see HeartRateService._logEntry -> debugPrint -> logcat). This
-// script collects those lines, then — with you labeling each reading as
-// CLEAN (verified against a pulse oximeter) or NOISY (deliberately bad:
-// movement, partial coverage) — computes the factor distributions for each
-// group and finds the medium/high threshold that best separates them. That is
-// the recalibration input for PpgConfig (§9.3 / DECISIONS).
+// `HG_HR` (HeartRateService) / `HG_RR` (BreathingRateService) tags via
+// debugPrint -> logcat. This script collects those lines, then — with you
+// labeling each reading as CLEAN (verified against a reference: oximeter for
+// HR, manual breath count for RR) or NOISY (deliberately bad) — computes the
+// factor distributions for each group and finds the medium/high threshold
+// that best separates them. That is the recalibration input for the config
+// structs (§9.3 / DECISIONS).
 //
 // Usage:
-//   dart run tools/hr_log.dart collect --label   clear logcat, you measure
-//                                                clean readings then noisy
-//                                                ones, hit Enter, then label
-//   dart run tools/hr_log.dart analyze <file> --label
-//   ... [--csv out.csv]
+//   dart run tools/hr_log.dart collect --label          // HR (default tag)
+//   dart run tools/hr_log.dart collect --label --tag HG_RR
+//   ... same; RR sessions are 45 s, HR are 30 s
+//   dart run tools/hr_log.dart analyze <file> --label [--tag HG_RR] [--csv out.csv]
 //
 // Suggested measurement protocol (already piloted on the target device):
-//   1) 2-4 clean readings: fingertip fully covering lens+flash, still, ~30 s
-//      each; note the oximeter bpm per reading.
-//   2) 2-3 noisy readings: deliberately jitter the finger, slide/press
-//      unevenly, or cover only part of the lens, ~20-30 s each.
+//   HR: 2-4 clean readings (finger covering lens+flash, still, ~30 s each;
+//       note the oximeter bpm) then 2-3 noisy (jitter/partial coverage).
+//   RR: 2-4 clean readings (quiet room, phone near the mouth/nose, ~45 s;
+//       count breaths for a 15 s slice x4 as the reference cpm) then 2-3 noisy
+//       (talk over it, breathe weakly/far, fan or AC noise).
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -30,12 +31,36 @@ const kHigh = 0.75;
 const kFallbackReg = 0.7;
 const kDriftMax = 4.0;
 
+/// Per-vital parsing profile: which metric key, the quality-medium constant to
+/// compare against, and whether the factor set includes BPM drift.
+class VitalSpec {
+  const VitalSpec(this.tag, this.metric, this.medium, this.hasDrift);
+  final String tag;
+  final String metric;
+  final double medium;
+  final bool hasDrift;
+}
+
+const _specs = <String, VitalSpec>{
+  'HG_HR': VitalSpec('HG_HR', 'bpm', 0.50, true),
+  'HG_RR': VitalSpec('HG_RR', 'cpm', 0.55, false),
+};
+
+VitalSpec _specOf(List<String> args) {
+  final i = args.indexOf('--tag');
+  if (i >= 0 && i + 1 < args.length) {
+    return _specs[args[i + 1].toUpperCase()] ?? _specs[kTag]!;
+  }
+  return _specs[kTag]!;
+}
+
 Future<void> main(List<String> args) async {
+  final spec = _specOf(args);
   final csv = _flagArgs(args, '--csv');
   final labeled = args.contains('--label') || args.contains('-l');
   switch (args.firstOrNull) {
     case 'collect':
-      await collect(csv: csv, labeled: labeled);
+      await collect(spec, csv: csv, labeled: labeled);
       break;
     case 'analyze':
       final pos = args.indexOf('--csv');
@@ -43,10 +68,10 @@ Future<void> main(List<String> args) async {
         final file = args.length > 2 ? args[2] : null;
         if (file == null) return usage();
         analyzeAll(await File(file).readAsString(),
-            csv: csv, labeled: labeled);
+            spec: spec, csv: csv, labeled: labeled);
       } else if (args.length > 1) {
         analyzeAll(await File(args[1]).readAsString(),
-            csv: csv, labeled: labeled);
+            spec: spec, csv: csv, labeled: labeled);
       } else {
         return usage();
       }
@@ -62,14 +87,15 @@ String? _flagArgs(List<String> args, String flag) {
 }
 
 void usage() {
-  stdout.writeln('''HR log analyzer (supervised)
+  stdout.writeln('''HR/RR log analyzer (supervised)
  usage:
-   dart run tools/hr_log.dart collect [--label] [--csv out.csv]
-   dart run tools/hr_log.dart analyze <logcat_file> [--label] [--csv out.csv]
- Iteractive: label each measured session "clean <oximeter_bpm>" or "noisy"
+   dart run tools/hr_log.dart collect [--label] [--tag HG_HR|HG_RR] [--csv out.csv]
+   dart run tools/hr_log.dart analyze <logcat_file> [--label] [--tag HG_HR|HG_RR]
+                                        [--csv out.csv]
+ Interactive: label each measured session "clean <reference>" or "noisy"
  (or "skip"); the tool then finds the quality threshold that best separates
- clean from noisy and reports factor distributions vs medium=$kMedium /
- high=$kHigh.''');
+ clean from noisy and reports factor distributions vs the medium constant
+ (HR bpm 0.50 / RR cpm 0.55).''');
 }
 
 String _fmt(double? v) =>
@@ -80,7 +106,8 @@ double? _numOf(Map<String, Object?> e, String k) {
   return v is num ? v.toDouble() : null;
 }
 
-Future<void> collect({String? csv, bool labeled = false}) async {
+Future<void> collect(VitalSpec spec,
+    {String? csv, bool labeled = false}) async {
   stdout.writeln('Clearing device logcat...');
   final clear = await Process.run('adb', ['logcat', '-c']);
   if (clear.exitCode != 0) {
@@ -88,9 +115,9 @@ Future<void> collect({String? csv, bool labeled = false}) async {
     exitCode = 1;
     return;
   }
-  stdout.writeln('Clear. Protocol: first 2-4 CLEAN readings (verified vs the '
-      'pulse oximeter),\nthen 2-3 deliberately NOISY ones (movement, partial '
-      'coverage).');
+  stdout.writeln('Clear. ${spec.tag} protocol: first 2-4 CLEAN readings '
+      '(verified as described in the tool header),\nthen 2-3 deliberately '
+      'NOISY ones.');
   stdout.writeln('Press Enter here when all readings are done.');
   stdin.readLineSync();
 
@@ -101,21 +128,23 @@ Future<void> collect({String? csv, bool labeled = false}) async {
     exitCode = 1;
     return;
   }
-  analyzeAll('${pull.stdout}', csv: csv, labeled: labeled);
+  analyzeAll('${pull.stdout}', spec: spec, csv: csv, labeled: labeled);
 }
 
-/// One parsed session: its progress/final HG_HR events.
+/// One parsed session: its progress/final events.
 class _Session {
-  _Session(this.events);
+  _Session(this.events, this.metric);
   final List<Map<String, Object?>> events;
+  final String metric;
 
   List<Map<String, Object?>> get progress =>
       events.where((e) => e['type'] == 'p').toList();
   Map<String, Object?>? get final_ =>
       events.where((e) => e['type'] == 'f').toList().lastOrNull;
   String get outcome => (final_?['outcome'] ?? 'incomplete').toString();
-  Object? get bpm => final_?['bpm'];
+  Object? get value => final_?[metric];
   String get conf => (final_?['conf'] ?? '—').toString();
+  Object? get reason => final_?['reason'];
 
   /// Means of each factor over this session's progress lines.
   ({double? q, double? reg, double? corr, double? amp, double? drift}) means() {
@@ -165,15 +194,16 @@ class _Session {
   }
 
   String get tag =>
-      'outcome=$outcome${conf == '—' ? '' : ' [$conf]'} bpm=${bpm ?? '—'}';
+      'outcome=$outcome${conf == '—' ? '' : ' [$conf]'} $metric=${value ?? '—'}';
 }
 
-void analyzeAll(String log, {String? csv, bool labeled = false}) {
+void analyzeAll(String log,
+    {required VitalSpec spec, String? csv, bool labeled = false}) {
   final sessions = <_Session>[];
   List<Map<String, Object?>>? cur;
   var parsed = 0;
 
-  final re = RegExp('$kTag\\s*(\\{.*\\})');
+  final re = RegExp('${spec.tag}\\s*(\\{.*\\})');
   for (final line in log.split('\n')) {
     final m = re.firstMatch(line);
     if (m == null) continue;
@@ -189,13 +219,14 @@ void analyzeAll(String log, {String? csv, bool labeled = false}) {
     } else if (e['type'] == 'f' && e['outcome'] is String) {
       cur ??= [];
       cur.add(e);
-      sessions.add(_Session(cur));
+      sessions.add(_Session(cur, spec.metric));
       cur = null;
     }
   }
-  if (cur != null) sessions.add(_Session(cur));
+  if (cur != null) sessions.add(_Session(cur, spec.metric));
 
-  stdout.writeln('Parsed $parsed $kTag lines -> ${sessions.length} session(s).');
+  stdout.writeln('Parsed $parsed ${spec.tag} lines -> ${sessions.length} '
+      'session(s).');
   if (sessions.isEmpty) {
     stdout.writeln('(nothing found; did you measure after clearing logcat?)');
     return;
@@ -209,26 +240,63 @@ void analyzeAll(String log, {String? csv, bool labeled = false}) {
     i++;
     final m = s.means();
     final qLoHi = _range(s.progress);
-    stdout.writeln('--- session $i ${s.tag} ${s.outcome == 'insufficient' &&
-            (m.q ?? 0) >= kMedium && (m.reg ?? 0) >= kFallbackReg
-        ? ' <<< GATE ANOMALY: medium score but insufficient'
-        : ''}');
+    final reason =
+        s.reason is String ? ' reason=${s.reason}' : '';
+    stdout.writeln('--- session $i ${s.tag} '
+        '${s.outcome == 'insufficient' &&
+                (m.q ?? 0) >= spec.medium && (m.reg ?? 0) >= kFallbackReg
+            ? '<<< GATE ANOMALY: medium score but insufficient'
+            : ''}$reason');
     stdout.writeln('    secs=${s.progress.length} '
-        'q=μ${_fmt(m.q)} [${qLoHi.$1 == null ? '—' : qLoHi.$1!.toStringAsFixed(2)}..'
+        'q=Î¼${_fmt(m.q)} [${qLoHi.$1 == null ? '—' : qLoHi.$1!.toStringAsFixed(2)}..'
         '${qLoHi.$2 == null ? '—' : qLoHi.$2!.toStringAsFixed(2)}] '
-        'reg=μ${_fmt(m.reg)} corr=μ${_fmt(m.corr)} amp=μ${_fmt(m.amp)} '
-        'drift=μ${_fmt(m.drift)}');
+        'reg=Î¼${_fmt(m.reg)} corr=Î¼${_fmt(m.corr)} amp=Î¼${_fmt(m.amp)} '
+        '${spec.hasDrift ? 'drift=Î¼${_fmt(m.drift)}' : ''}');
+    if (!spec.hasDrift) {
+      final fe = s.final_ ?? s.progress.lastOrNull;
+      if (fe != null) {
+        stdout.writeln('    gates noisy=${fe['noisy'] == true} '
+            'sub=${fe['sub'] == true} envSub=${fe['env_sub'] == true} '
+            'breath=${fe['breath'] == true} ibis=${fe['ibis'] ?? '—'} '
+            'lag=${fe['lag'] ?? '—'}');
+      }
+      final last = s.progress.lastOrNull;
+      if (last != null) {
+        stdout.writeln('    levels raw=${last['raw'] ?? '—'} '
+            'band=${last['band'] ?? '—'} peak=${last['peak'] ?? '—'} '
+            'peaks=${last['peaks'] ?? '—'}');
+      }
+    }
     if (m.q != null) {
       totalQ += m.q!;
       qCount++;
     }
     if (csv != null) {
+      final cols = <String>[
+        'sec',
+        spec.metric,
+        'reg',
+        'corr',
+        'amp',
+        if (spec.hasDrift) 'drift',
+        'q',
+        'usable',
+        if (!spec.hasDrift) 'ibis',
+        if (!spec.hasDrift) 'lag',
+        if (!spec.hasDrift) 'peaks',
+        if (!spec.hasDrift) 'raw',
+        if (!spec.hasDrift) 'band',
+        if (!spec.hasDrift) 'peak',
+        if (!spec.hasDrift) 'breath',
+        if (!spec.hasDrift) 'noisy',
+        if (!spec.hasDrift) 'sub',
+        if (!spec.hasDrift) 'env_sub',
+      ];
       for (final e in s.progress) {
         csvLines.add([
           '$i',
           s.outcome,
-          for (final k in ['sec', 'bpm', 'reg', 'corr', 'amp', 'drift', 'q', 'usable'])
-            '${e[k] ?? ''}',
+          for (final k in cols) '${e[k] ?? ''}',
         ]);
       }
     }
@@ -241,12 +309,33 @@ void analyzeAll(String log, {String? csv, bool labeled = false}) {
         '$qCount session(s).');
   }
 
-  if (labeled) _supervisedReport(sessions);
+  if (labeled) _supervisedReport(sessions, spec);
 
   if (csv != null) {
-    final rows = csvLines.map((r) => r.join(',')).join('\n');
-    File(csv)
-        .writeAsStringSync('session,outcome,sec,bpm,reg,corr,amp,drift,q,usable\n$rows');
+    final header = <String>[
+      'session',
+      'outcome',
+      'sec',
+      spec.metric,
+      'reg',
+      'corr',
+      'amp',
+      if (spec.hasDrift) 'drift',
+      'q',
+      'usable',
+      if (!spec.hasDrift) 'ibis',
+      if (!spec.hasDrift) 'lag',
+      if (!spec.hasDrift) 'peaks',
+      if (!spec.hasDrift) 'raw',
+      if (!spec.hasDrift) 'band',
+      if (!spec.hasDrift) 'peak',
+      if (!spec.hasDrift) 'breath',
+      if (!spec.hasDrift) 'noisy',
+      if (!spec.hasDrift) 'sub',
+      if (!spec.hasDrift) 'env_sub',
+    ];
+    File(csv).writeAsStringSync(
+        '${header.join(',')}\n${csvLines.map((r) => r.join(',')).join('\n')}');
     stdout.writeln('Wrote $csv');
   }
 }
@@ -278,7 +367,7 @@ class _Labelled {
   double? get maxQ => session.maxQ();
 }
 
-void _supervisedReport(List<_Session> sessions) {
+void _supervisedReport(List<_Session> sessions, VitalSpec spec) {
   stdout.writeln();
   stdout.writeln('Labeling pass: for each session type '
       '"clean <oximeter_bpm>" or "noisy" (blank = skip).');
@@ -323,7 +412,7 @@ void _supervisedReport(List<_Session> sessions) {
     if (group) {
       final errs = g
           .map((l) {
-            final b = l.session.bpm;
+            final b = l.session.value;
             if (b is num && l.ref != null) return (b.toDouble() - l.ref!).abs();
             return null;
           })
@@ -331,17 +420,17 @@ void _supervisedReport(List<_Session> sessions) {
           .toList();
       err = errs.isEmpty ? null : errs.reduce((a, b) => a + b) / errs.length;
     }
-    stdout.writeln('-- $name n=${g.length}'
-        '${group && err != null ? ' mean|err|=${err.toStringAsFixed(1)} bpm' : ''}');
-    stdout.writeln('    q    μ=${_fmt(meanQ(g))} ${_rangeOf(g, (l) => l.q)} '
+stdout.writeln('-- $name n=${g.length}'
+      '${group && err != null ? ' mean|err|=${err.toStringAsFixed(1)} ${spec.metric}' : ''}');
+    stdout.writeln('    q    Î¼=${_fmt(meanQ(g))} ${_rangeOf(g, (l) => l.q)} '
         'max=${_fmt(_gmax(g, (l) => l.maxQ))}');
-    stdout.writeln('    reg  μ=${_fmt(_gmean(g, (l) => l.reg))} '
+    stdout.writeln('    reg  Î¼=${_fmt(_gmean(g, (l) => l.reg))} '
         '${_rangeOf(g, (l) => l.reg)}');
-    stdout.writeln('    corr μ=${_fmt(_gmean(g, (l) => l.corr))} '
+    stdout.writeln('    corr Î¼=${_fmt(_gmean(g, (l) => l.corr))} '
         '${_rangeOf(g, (l) => l.corr)}');
-    stdout.writeln('    amp  μ=${_fmt(_gmean(g, (l) => l.amp))} '
+    stdout.writeln('    amp  Î¼=${_fmt(_gmean(g, (l) => l.amp))} '
         '${_rangeOf(g, (l) => l.amp)}');
-    stdout.writeln('    drift μ=${_fmt(_gmean(g, (l) => l.drift))} '
+    stdout.writeln('    drift Î¼=${_fmt(_gmean(g, (l) => l.drift))} '
         '${_rangeOf(g, (l) => l.drift)}');
     final acc = g.where((l) => l.session.outcome == 'ok').length;
     stdout.writeln('    accepted as reading: $acc/${g.length}');
@@ -383,14 +472,14 @@ void _supervisedReport(List<_Session> sessions) {
   // FPs/FNs at the CURRENT medium threshold, using per-reading mean q.
   var fp = 0, fn = 0;
   for (final l in noisy) {
-    if ((l.maxQ ?? 0) >= kMedium) fp++;
+    if ((l.maxQ ?? 0) >= spec.medium) fp++;
   }
   for (final l in clean) {
-    if (l.q == null || l.q! < kMedium) fn++;
+    if (l.q == null || l.q! < spec.medium) fn++;
   }
   stdout.writeln();
-  stdout.writeln('current medium=$kMedium: NOISY false-positives '
-      '(max q >= medium): $fp/${noisy.length}; '
+  stdout.writeln('current medium=${spec.medium.toStringAsFixed(2)}: NOISY '
+      'false-positives (max q >= medium): $fp/${noisy.length}; '
       'CLEAN false-negatives (mean q < medium): $fn/${clean.length}.');
 
   final gap = _sepGap(clean, noisy);

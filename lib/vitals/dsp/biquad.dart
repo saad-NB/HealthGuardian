@@ -52,9 +52,16 @@ class Biquad {
 
   /// Filters one sample.
   double process(double x) {
+    // Defensive: a single non-finite input (or a numerically poisoned state)
+    // would otherwise propagate NaN through the recursive delay line forever.
+    if (!x.isFinite) x = 0;
     final y = _b0 * x + _s1;
     _s1 = _b1 * x - _a1 * y + _s2;
     _s2 = _b2 * x - _a2 * y;
+    if (!y.isFinite || !_s1.isFinite || !_s2.isFinite) {
+      reset();
+      return 0;
+    }
     return y;
   }
 

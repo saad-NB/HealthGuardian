@@ -192,6 +192,30 @@ void main() {
     await controller.close();
   });
 
+  testWidgets('breathing rate also gates on "Start measuring" (no mic preview)',
+      (tester) async {
+    final controller = StreamController<MeasurementEvent>.broadcast();
+    final session = MeasurementSession(
+      kind: VitalKind.breathingRate,
+      ensureAccess: (_) async => true,
+      run: () => controller.stream,
+      positionsFirst: true,
+    );
+    await tester.pumpWidget(appWith(session: session));
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Start measuring'), findsOneWidget);
+    expect(find.text('Starting camera…'), findsNothing); // mic, not camera
+    expect(find.textContaining('mouth or nose'), findsOneWidget);
+    expect(find.textContaining('remaining'), findsNothing); // timer NOT running
+
+    await tester.tap(find.text('Start measuring'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('remaining'), findsOneWidget); // countdown on now
+    await controller.close();
+  });
+
   testWidgets('diagnostics show live while measuring and survive until retry',
       (tester) async {
     final controller = StreamController<MeasurementEvent>.broadcast();

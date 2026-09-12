@@ -483,3 +483,45 @@ rechecks showed chaotic readings spike to ~0.48 just before collapsing, while
 a proper reading never drops below 0.50 during the session — so 0.50 rejects
 the spike without touching real readings (clean final-second q 0.55-0.56
 clears it with margin). Kept `maxAcceptableDriftBpm > 4` gate unchanged.
+
+**Implementation notes (2026-09-12f, RR on-device diagnosis — `VITALS_SENSING
+§5.2/§5.3`):** every real breathing-rate session returned `insufficient`
+(`peaks=0`, `breaths=false`) despite clear breath energy in the audio. Replaying
+captured PCM through the pipeline offline isolated three defects, all now fixed:
+
+1. **NaN poisoning of the envelope IIR cascade (the show-stopper).** Real
+   captures begin with silent/zero frames: `env=0` and the detrend mean `det=0`,
+   so `env/det = 0/0 = NaN`. A single NaN never leaves a recursive filter's
+   delay line, so the band-passed envelope stayed `NaN` for the whole session and
+   `PeakDetector` (whose confirm test is `value <= peak*(1-fallRatio)`) confirmed
+   nothing — 0 peaks regardless of signal quality. Fix: skip frames while
+   `det <= 1e-9`, and `Biquad.process` now sanitizes non-finite input and resets
+   its state if it ever goes non-finite. The synthetic benches missed this
+   because they start with signal, not silence; a silence-then-breath regression
+   test now covers it.
+2. **Startup transient.** Leading silence dragged the running-mean denominator
+   toward zero, inflating the first real frame into a huge crest that raised the
+   echo floor and rejected every real breath after it. Fix: seed the running
+   mean at the first nonzero level, and make the echo floor an EMA rather than a
+   monotonic max.
+3. **Rate picked the wrong period.** The estimate let the envelope
+   autocorrelation's global maximum override the peak cadence; slow envelope
+   drift (a ~14 s wander completing ~2 cycles in the 30 s window) read as a
+   strong 4 cpm period (one session logged **4.26 cpm**). The old integer-ratio
+   rule is superseded: the rate now comes from the **peak train** (drift-free)
+   via `peakTrainPeriodMs()` (median interval, or the pair sum when intervals
+   alternate short/long from filter echoes), the autocorrelation search is capped
+   to periods completing ≥ `minDominantCycles` (3) cycles, and `breathPeriodMs()`
+   doubles the burst period to the breath cycle when the envelope's
+   autocorrelation at 2× the burst period is nearly as strong as at the burst
+   period.
+
+**Double-burst calibration (2026-09-12g):** five supervised sessions (counted
+10/11/15/16/18 breaths/min) all read ~1.9× high — phone-at-mouth breathing yields
+an **inhale and an exhale energy burst per breath**, so the raw peak cadence is
+the burst rate, not the breath rate. After the subharmonic fix the same captures
+read 10.4/9.3/13.9/14.9/18.5 (mean |err| ≈ 1 cpm); three further on-device
+sessions agreed within ±2 bpm. This is now the operating assumption for the
+mouth/nose placement the UI instructs. `singleBurstCorrFloor` / `doubleBurstCorrMargin`
+are the tunable constants; a two-burst synthetic bench locks it in.
+
