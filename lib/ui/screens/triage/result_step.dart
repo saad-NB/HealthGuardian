@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../../services/tier2_service.dart';
 import '../../../state/app_state.dart';
@@ -96,7 +96,7 @@ class _ResultStepState extends State<ResultStep> {
     );
   }
 
-  Future<void> _share(BuildContext context) async {
+  Future<void> _share() async {
     final result = _result;
     final lines = <String>[
       'Sehat Nigraan triage result',
@@ -115,14 +115,12 @@ class _ResultStepState extends State<ResultStep> {
         'Clinician verification required.',
       ],
     ];
-    await Clipboard.setData(ClipboardData(text: lines.join('\n')));
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Summary copied - paste it into SMS or WhatsApp.'),
-        ),
-      );
-    }
+    await SharePlus.instance.share(
+      ShareParams(
+        subject: 'Triage result - ${result.tier.label}',
+        text: lines.join('\n'),
+      ),
+    );
   }
 
   @override
@@ -135,7 +133,7 @@ class _ResultStepState extends State<ResultStep> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          TierBanner(tier: result.tier, onShare: () => _share(context)),
+          TierBanner(tier: result.tier, onShare: _share),
           const SizedBox(height: 16),
           if (result.vitalReviewRequired) ...[
             const ReviewBanner(
@@ -222,6 +220,7 @@ class _ResultStepState extends State<ResultStep> {
                 label: 'Ask about this result',
                 icon: Icons.chat_bubble_outline,
                 backgroundColor: AppColors.surface,
+                foregroundColor: Theme.of(context).colorScheme.primary,
                 onPressed: _onAsk,
               ),
             ] else if (_generating) ...[
@@ -231,6 +230,7 @@ class _ResultStepState extends State<ResultStep> {
                 label: 'Generate AI summary (Tier 2)',
                 icon: Icons.smart_toy_outlined,
                 backgroundColor: AppColors.surface,
+                foregroundColor: Theme.of(context).colorScheme.primary,
                 onPressed: _onGenerate,
               ),
               if (_genError)
@@ -254,6 +254,7 @@ class _ResultStepState extends State<ResultStep> {
             label: 'Edit danger signs',
             icon: Icons.warning_amber,
             backgroundColor: AppColors.surface,
+            foregroundColor: Theme.of(context).colorScheme.primary,
             onPressed: widget.onEditDanger,
           ),
           const SizedBox(height: 10),

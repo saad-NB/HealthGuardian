@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../triage/models.dart';
+import '../../../triage/probes.dart';
 import '../../theme/app_tokens.dart';
 import '../../widgets/answer_chip.dart';
 import '../../widgets/question_scaffold.dart';
@@ -118,7 +119,16 @@ class _ComplaintStepState extends State<ComplaintStep> {
       selected: answered,
       icon: _iconFor(c),
       onSelected: () {
-        widget.answers.selectComplaint(c);
+        if (answered) {
+          // Second tap unselects and drops this complaint's probe answers so
+          // stale Section E scores cannot leak into the engine.
+          widget.answers.deselectComplaint(c);
+          for (final q in probeQuestions(c.branch)) {
+            widget.answers.probeAnswers.remove(q.id);
+          }
+        } else {
+          widget.answers.selectComplaint(c);
+        }
         widget.onRefresh();
       },
     );

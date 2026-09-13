@@ -2,63 +2,85 @@ import 'dart:math' as math;
 
 import 'package:fllama/fllama.dart' show Message;
 
-/// Per-call inference budgets for the local MedGemma worker (ADR-014).
+/// Per-call inference budgets for the local MedGemma worker (ADR-014/ADR-019).
 ///
-/// fllama's OpenAI-style chat has no auto history management, and MedGemma's
-/// visible reasoning consumes completion tokens before the real answer. To keep
-/// replies from being truncated we compute `maxTokens` dynamically from the
-/// measured prompt size every call:
+/// fllama hardcodes `n_parallel = 4` with a non-unified KV cache, so llama.cpp
+/// divides the requested context by four (`n_ctx_seq = n_ctx / 4`). Every budget
+/// here is therefore expressed against the **usable** per-sequence window
+/// ([usableContext]); the value actually handed to fllama is [requestedContext]
+/// (`usableContext * parallelSlots`).
 ///
-/// - chat: total context fixed at [chatContextSize]; completion is whatever
-///   remains after the measured prompt, clamped to a [chatCompletionFloor, cap]
-///   band. When the prompt would push completion below the floor the history is
-///   compacted ([compactHistory]) instead of overflowing the context window.
-/// - summary: total context [summaryContextSize]; completion is dynamic too,
-///   never dropping below [summaryCompletionFloor] so a strict-JSON reply
-///   always has room.
+/// Completion is computed dynamically from the measured prompt every call so a
+/// reply can never overflow the window:
+/// - summary: a strict-JSON reply always gets room, clamped to a
+///   [summaryCompletionFloor, summaryCompletionCap] band.
+/// - chat: the reply gets the remaining window, clamped to a
+///   [chatCompletionFloor, chatCompletionCap] band; history is compacted rather
+///   than letting the prompt overflow.
 ///
-/// Token estimate is a cheap heuristic (≈3.5 chars per token) used only to size
+/// Token estimate is a cheap heuristic (≈3 chars per token) used only to size
 /// budgets; the native server still owns the real tokenization.
 class InferenceBudget {
   InferenceBudget._();
 
-  /// Rough chars-per-token heuristic for English text.
-  static const double charsPerToken = 3.5;
+  /// fllama's hardcoded `n_parallel` (see `device_capabilities.dart`).
+  static const int parallelSlots = 4;
+
+  /// Conservative chars-per-token heuristic for English + medical JSON.
+  static const double charsPerToken = 3.0;
+
+  static int _usableContext = 2048;
+
+  /// Sets the per-sequence window from the detected device profile. Values
+  /// `<= 0` are ignored so a disabled device keeps a sane default for tests.
+  static void configure({required int usableContext}) {
+    if (usableContext > 0) _usableContext = usableContext;
+  }
+
+  /// Tokens available to a single conversation (`n_ctx_seq`).
+  static int get usableContext => _usableContext;
+
+  /// `contextSize` (n_ctx) to hand to fllama so one conversation gets
+  /// [usableContext] tokens.
+  static int get requestedContext => _usableContext * parallelSlots;
 
   /// Completion budget for the Tier 2 summary call.
-  static const int summaryContextSize = 4096;
-  static const int summaryCompletionFloor = 1024;
+  static const int summaryHeadroom = 320;
+  static const int summaryCompletionFloor = 512;
   static const int summaryCompletionCap = 1536;
-  static const int summaryHeadroom = 384;
 
-  /// Completion budget for chat turns (prompt + reply fits in this window).
-  static const int chatContextSize = 3072;
-  static const int chatCompletionFloor = 512;
-  static const int chatCompletionCap = 1536;
+  /// Completion budget for chat turns.
   static const int chatHeadroom = 192;
+  static const int chatCompletionFloor = 384;
+  static const int chatCompletionCap = 1024;
 
   /// Max prompt tokens (excluding completion) after which chat history must be
-  /// compacted so that completion never drops below [chatCompletionFloor].
+  /// compacted so completion never drops below [chatCompletionFloor].
   static int get chatPromptCap =>
-      chatContextSize - chatCompletionFloor - chatHeadroom;
+      math.max(0, usableContext - chatCompletionFloor - chatHeadroom);
 
   static int estimateTokens(String text) =>
       (text.length / charsPerToken).ceil();
 
+  /// Clamps [room] into `[floor, cap]` but never above the available room, so
+  /// `prompt + completion` always fits inside [usableContext].
+  static int _completion(int room, int floor, int cap) {
+    if (room <= 0) return 0;
+    return room.clamp(math.min(floor, room), math.min(cap, room));
+  }
+
   /// Dynamic `maxTokens` for the summary call given the prompt's token size.
-  static int summaryCompletion(int promptTokens) => math.max(
+  static int summaryCompletion(int promptTokens) => _completion(
+        usableContext - promptTokens - summaryHeadroom,
         summaryCompletionFloor,
-        math.min(
-          summaryContextSize - promptTokens - summaryHeadroom,
-          summaryCompletionCap,
-        ),
+        summaryCompletionCap,
       );
 
   /// Dynamic `maxTokens` for a chat turn given the prompt's token size.
-  static int chatCompletion(int promptTokens) => math.max(
+  static int chatCompletion(int promptTokens) => _completion(
+        usableContext - promptTokens - chatHeadroom,
         chatCompletionFloor,
-        math.min(chatContextSize - promptTokens - chatHeadroom,
-            chatCompletionCap),
+        chatCompletionCap,
       );
 
   /// Keeps the newest [budgetTokens]-worth of [history], always retaining the

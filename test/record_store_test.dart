@@ -184,7 +184,25 @@ void main() {
         await tester.pumpAndSettle();
       }
 
-      await tap('Adult');
+      Future<void> setAge(int years) async {
+        final display = find.byKey(const ValueKey('valueDisplay'));
+        await tester.ensureVisible(display);
+        await tester.pumpAndSettle();
+        await tester.tap(display);
+        await tester.pumpAndSettle();
+        await tester.enterText(
+          find.descendant(
+            of: find.byType(AlertDialog),
+            matching: find.byType(TextField),
+          ),
+          '$years',
+        );
+        await tester.tap(find.text('Save'));
+        await tester.pumpAndSettle();
+      }
+
+      // Age starts blank; enter 30 to select the adult (NEWS2) scale.
+      await setAge(30);
       await cont(); // patient info -> danger gates
       for (var i = 0; i < 9; i++) {
         await cont(); // danger gates + 8 NEWS2 vitals

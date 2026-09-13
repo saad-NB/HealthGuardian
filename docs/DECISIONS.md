@@ -573,4 +573,138 @@ Measured on synthetics, one burst/breath gives ≈0.000 and a true two-burst
 envelope ≈0.14+, a clean separation. `doubleBurstCorrMargin` is removed;
 `sub_e` is added to the HG_RR diagnostic line for on-device validation.
 
+---
+
+## ADR-018: Offline Drug-Interaction Checker (public-domain dataset + on-device explain)
+
+**Date:** 2026-09-12
+**Status:** Accepted (implemented: data pipeline, engine, Drugs tab, tests;
+openFDA enrichment is a partial, resumable pass) - see `docs/DRUG_INTERACTIONS.md`
+
+**Context:** The roadmap deferred drug-interaction checking because NLM's RxNav
+DDI API was permanently discontinued (Jan 2024), and any replacement must ship a
+static dataset offline. We want severity labels, a blocking warning for serious
+pairs, and an optional on-device explanation via MedGemma - all commercial-clean.
+
+**Decisions:**
+1. **Public-domain / license-free data only.** Sources: VA **NDF-RT** (pair
+   table), **ONC** high-priority list (contraindicated pairs), the **openFDA
+   drug/label static bulk export** (severity enrichment), and an
+   **NDFRT -> RxNorm** name map. No NC sources (DDI, full DrugBank, SIDER,
+   TWOSIDES). openFDA is consumed as a **static bulk download** (14 parts,
+   ~1.8 GB, 262,842 records), not the rate-limited query API; the API is used
+   only to read the file manifest.
+2. **MED-RT is not a DDI source.** Verified 2026-09-12 that its accessory bundle
+   is crosswalks only and its ontology carries no `severity`/`has_DDI`; it is
+   used for classes only.
+3. **Severity model:** `contraindicated` (ONC) > `severe` / `moderate` (openFDA
+   label context) > `reported` (ungraded NDF-RT pair). `reported` is shown
+   distinctly and is never presented as "safe".
+4. **Ingredient-level generic names only** (no brand names).
+5. **Bundled assets, loaded once:** `assets/data/ddi.json` (~528 KB) and
+   `drug_names.json` (~30 KB) via `rootBundle`; pure-Dart `InteractionDataset` +
+   `InteractionEngine` (no platform code, fully unit-testable).
+6. **Product placement:** a new 5th **Drugs** tab (Start / History / Monitor /
+   Drugs / Ask AI). Autocomplete + chip list, results coloured by the locked
+   tier palette, an inline warning for `moderate` pairs, a non-dismissible
+   blocking dialog only for `severe`/`contraindicated` pairs, a streamed
+   MedGemma explanation per result (optional; needs the GGUF), and an **Ask AI
+   hand-off** that attaches the entered medicines + screening result to a chat.
+7. **Privacy/offline:** every lookup is on-device. Saved checks persist only the
+   entered generic names, the matched severities, and the timestamp (mirrors
+   `MonitorStore`); no raw data leaves the device.
+8. **Reproducible pipeline** in `datasets/scripts/` (`verify_medrt_ddi` ->
+   `fetch_openfda_bulk` -> `mine_openfda.py` -> `build_ddi` -> `emit_assets`);
+   raw upstream downloads are git-ignored, authored/derived files are tracked.
+
+**Consequences:**
+- `docs/DRUG_INTERACTIONS.md` is the design reference;
+  `docs/DRUG_INTERACTION_DATA_SOURCES.md` is the provenance/licensing record.
+- The dataset is a **screening aid, not a clinical decision system**; absence of
+  a warning is explicitly not proof that a combination is safe.
+- The openFDA pass is a **static bulk** download (no rate limits): it re-graded
+  2,295 pairs and added 869 strictly-discovered new pairs (243 `severe`, 626
+  `moderate`), growing the bundled asset from 528 KB to 555 KB. Discovered pairs
+  are regex-mined and **lower-confidence**, and are presented as a screening aid.
+
+---
+
+## ADR-019: Device-aware context window, fllama `n_parallel` correction, reasoning-trace handling, and emergency first-aid prompt
+
+**Date:** 2026-09-13
+**Status:** Accepted
+
+**Context:** On-device verification surfaced three related failures:
+1. **Tier 2 summary parsing failed intermittently** and chat "filled up" after a
+   few turns. Root cause found in the bundled fllama/llama.cpp source: fllama
+   hardcodes `n_parallel = 4` (`ServerManager::DEFAULT_N_PARALLEL`,
+   `src/fllama_inference_queue.h`) and never sets `kv_unified`, so llama.cpp
+   computes `n_ctx_seq = n_ctx / 4` (`src/llama-context.cpp:293`). A single
+   conversation therefore only ever had a **quarter** of the requested context
+   (summary 4096 → 1024 usable; chat 3072 → 768 usable).
+2. **Raising the generation cap caused over-generation/looping.** MedGemma-1.5-4B
+   answers with a visible `Draft n / Critique n / Revise n` self-critique loop
+   that never terminates on its own and consumed the whole window.
+3. **Context size was fixed** (4096/3072) regardless of device RAM, risking OOM
+   on low-RAM phones.
+
+**KV-cache calculation (MedGemma-1.5-4B Q4_K_M, from the GGUF header):** 34
+layers, 4 KV heads × head_dim 256 = 1024 KV dim, sliding window 1024, SWA pattern
+6 → **5 dense + 29 sliding-window layers**. f16 KV = `(1024 K + 1024 V) × 2 B =
+4096 B` per cell per layer. llama.cpp gives SWA layers a separate cache capped at
+`pad256(min(n_ctx_seq, 1024 + n_ubatch=512)) = 1536` cells per stream × 4 streams
+= 6144 cells; dense layers scale with `n_ctx`. So
+`KV ≈ 696 MiB + 20,480 B × n_ctx`, and with the 4× duplication **1 GiB ≈ ~4,200
+usable tokens**. (A unified cache / `n_parallel = 1` would drop the SWA floor to
+174 MiB and give ~43,000 tokens per GiB — noted for a future fork.)
+
+**Decision:**
+1. **Correct for `n_parallel = 4` in Dart (no fork).** `InferenceBudget` now
+   exposes a **usable** per-sequence window and a `requestedContext = usable × 4`;
+   all calls hand fllama `requestedContext`. A single conversation gets the full
+   intended window.
+2. **Device-aware window (`DeviceCapabilities`).** `device_info_plus` (already a
+   dependency) reads `physicalRamSize` / `isLowRamDevice`; the profile maps RAM →
+   usable context: `<4 GB` disabled, `4–6 GB` 1024, `6–7 GB` 2048, `7–8 GB` 3072,
+   `≥8 GB` 4096. `Tier2Service.available` requires `tier2Enabled`, so Tier 2 never
+   loads on a device that cannot hold the 2.4 GiB model + KV.
+3. **Dynamic completion that always fits.** `completion = clamp(usable − prompt −
+   headroom, floor, cap)` and never exceeds the remaining room; the summary retry
+   re-runs at the same fitting budget. Token heuristic lowered to **3.0 chars/
+   token** for medical JSON.
+4. **Early stop via `fllamaCancelInference`.** `LlmService.chat` takes a
+   `stopWhen(accumulated)` predicate. The summary cancels as soon as a
+   brace-balanced object with a triage/summary key is complete
+   (`Tier2Parser.hasCompleteObject`); chat cancels on a second `Draft` round
+   (`ReasoningTrace.isLooping`). This makes a larger cap safe — the model can no
+   longer run to the cap or loop.
+5. **Reasoning-trace handling.** `ReasoningTrace` detects the `Draft/Critique/
+   Revise` headings, hides the trace while streaming, and extracts the final
+   answer from the last `Revise` section. A stricter system prompt asks the model
+   to answer directly, but the trace is handled even if the model ignores it.
+6. **Emergency first-aid guidance added to the master prompt.** Alongside the
+   no-diagnosis / no-prescribing rule, the chat system prompt now permits safe,
+   non-medication first-aid steps in an emergency (pressure on a bleeding wound,
+   cooling a burn under room-temperature water, safe positioning for choking/
+   fainting/seizure/suspected fracture). The **final shipped prompts are recorded
+   verbatim in `docs/PROMPTS.md`**.
+
+**Alternatives considered:**
+1. **Fork/patch fllama to `n_parallel = 1`** — best memory (3–4× less KV for the
+   same context) but requires vendoring/forking a large native package; deferred.
+2. **Raise `maxTokens` only** — rejected: the model loops to the cap (the observed
+   failure).
+3. **Static larger context on all devices** — rejected: OOM risk; the RAM gate is
+   safer and the user chose to disable Tier 2 below the minimum.
+
+**Consequences:**
+- Usable context is now **4× larger** for the same request; on the 8 GB test
+  device (7.5 GB reported) the window is 3072 usable (`contextSize` 12288).
+- Tier 2 is disabled below ~4 GB RAM and the app remains fully functional on
+  Tier 1.
+- `docs/PROMPTS.md` is the prompt reference; `docs/ARCHITECTURE.md` lists the new
+  `device_capabilities.dart` / `reasoning_trace.dart`.
+
+
+
 

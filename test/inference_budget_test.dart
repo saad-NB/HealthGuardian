@@ -4,64 +4,64 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:healthguardian/triage/inference_budget.dart';
 
 void main() {
-  group('InferenceBudget.estimateTokens', () {
-    test('estimates ~3.5 chars per token', () {
+  setUp(() => InferenceBudget.configure(usableContext: 2048));
+
+  group('estimateTokens', () {
+    test('uses ~3 chars per token', () {
       expect(InferenceBudget.estimateTokens('hello'), 2);
       expect(InferenceBudget.estimateTokens(''), 0);
-      expect(InferenceBudget.estimateTokens('a' * 100), 29);
+      expect(InferenceBudget.estimateTokens('a' * 100), 34);
     });
   });
 
-  group('summaryCompletion (dynamic, ADR-014)', () {
+  group('usable vs requested context (fllama n_parallel = 4)', () {
+    test('requested is four times the usable window', () {
+      InferenceBudget.configure(usableContext: 3072);
+      expect(InferenceBudget.usableContext, 3072);
+      expect(InferenceBudget.requestedContext, 12288);
+      expect(InferenceBudget.parallelSlots, 4);
+    });
+  });
+
+  group('summaryCompletion (dynamic, ADR-014/019)', () {
     test('caps at 1536 when the prompt is tiny', () {
       expect(InferenceBudget.summaryCompletion(0), 1536);
-      expect(
-        InferenceBudget.summaryCompletion(100),
-        1536,
-      );
-      expect(
-        InferenceBudget.summaryCompletion(2500),
-        InferenceBudget.summaryContextSize -
-            2500 -
-            InferenceBudget.summaryHeadroom,
-      );
     });
 
-    test('never drops below the 1024 floor', () {
-      expect(InferenceBudget.summaryCompletion(4096), 1024);
-      expect(InferenceBudget.summaryCompletion(30000), 1024);
-    });
-
-    test('stays between floor and cap', () {
-      for (var p = 0; p <= 8192; p += 128) {
+    test('never exceeds the remaining room', () {
+      for (var p = 0; p <= InferenceBudget.usableContext; p += 128) {
         final c = InferenceBudget.summaryCompletion(p);
-        expect(c, greaterThanOrEqualTo(1024));
-        expect(c, lessThanOrEqualTo(1536));
+        expect(p + c, lessThanOrEqualTo(InferenceBudget.usableContext));
       }
+    });
+
+    test('drops to zero once the prompt fills the window', () {
+      expect(InferenceBudget.summaryCompletion(2048), 0);
+      expect(InferenceBudget.summaryCompletion(30000), 0);
     });
   });
 
-  group('chatCompletion (fixed 3072 window)', () {
-    test('caps at 1536 on a small prompt', () {
-      expect(InferenceBudget.chatCompletion(0), 1536);
+  group('chatCompletion (usable window)', () {
+    test('caps at 1024 on a small prompt', () {
+      expect(InferenceBudget.chatCompletion(0), 1024);
     });
 
-    test('floors at 512 when the prompt is large', () {
-      expect(InferenceBudget.chatCompletion(100000), 512);
+    test('prompt + completion always fit in the usable window', () {
+      for (var p = 0; p <= InferenceBudget.usableContext; p += 128) {
+        final c = InferenceBudget.chatCompletion(p);
+        expect(p + c, lessThanOrEqualTo(InferenceBudget.usableContext));
+      }
     });
 
-    test('prompt + completion always fit in 3072 after compaction target', () {
-      final target = InferenceBudget.chatPromptCap;
-      final completion = InferenceBudget.chatCompletion(target);
-      expect(target + completion, lessThanOrEqualTo(
-          InferenceBudget.chatContextSize - InferenceBudget.chatHeadroom));
+    test('returns zero when the prompt already fills the window', () {
+      expect(InferenceBudget.chatCompletion(2048), 0);
     });
   });
 
   group('chatPromptCap', () {
-    test('leaves the 512 completion floor plus headroom', () {
+    test('leaves the completion floor plus headroom', () {
       expect(
-        InferenceBudget.chatContextSize - InferenceBudget.chatPromptCap,
+        InferenceBudget.usableContext - InferenceBudget.chatPromptCap,
         InferenceBudget.chatCompletionFloor + InferenceBudget.chatHeadroom,
       );
     });
@@ -104,9 +104,9 @@ void main() {
   group('chatPromptTokens', () {
     test('sums system, context and history', () {
       final tokens = InferenceBudget.chatPromptTokens(
-        systemText: 'a' * 35,
-        contextText: 'b' * 35,
-        history: [Message(Role.user, 'c' * 35)],
+        systemText: 'a' * 30,
+        contextText: 'b' * 30,
+        history: [Message(Role.user, 'c' * 30)],
       );
       expect(tokens, 30);
     });

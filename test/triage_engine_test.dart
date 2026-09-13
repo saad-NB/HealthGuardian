@@ -183,4 +183,37 @@ void main() {
       expect(r.vitalReviewRequired, isTrue);
     });
   });
+
+  group('Complaint toggling (§7)', () {
+    test('deselecting the primary promotes an additional complaint', () {
+      final a = TriageAnswers()
+        ..selectComplaint(ChiefComplaint.fever)
+        ..selectComplaint(ChiefComplaint.chest)
+        ..activeComplaint = null;
+      expect(a.chiefComplaint, ChiefComplaint.fever);
+      expect(a.additionalComplaints, [ChiefComplaint.chest]);
+
+      a.deselectComplaint(ChiefComplaint.fever);
+      expect(a.chiefComplaint, ChiefComplaint.chest);
+      expect(a.additionalComplaints, isEmpty);
+      expect(a.hasComplaint(ChiefComplaint.fever), isFalse);
+    });
+
+    test('deselecting an additional complaint keeps the primary', () {
+      final a = TriageAnswers()
+        ..selectComplaint(ChiefComplaint.fever)
+        ..selectComplaint(ChiefComplaint.chest);
+
+      a.deselectComplaint(ChiefComplaint.chest);
+      expect(a.chiefComplaint, ChiefComplaint.fever);
+      expect(a.additionalComplaints, isEmpty);
+    });
+
+    test('deselecting the last complaint clears active', () {
+      final a = TriageAnswers()..selectComplaint(ChiefComplaint.other);
+      a.deselectComplaint(ChiefComplaint.other);
+      expect(a.chiefComplaint, isNull);
+      expect(a.activeComplaint, isNull);
+    });
+  });
 }

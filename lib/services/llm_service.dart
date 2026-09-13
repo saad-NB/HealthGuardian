@@ -48,6 +48,7 @@ class LlmService {
     String? systemPrompt,
     List<Message>? history,
     Uint8List? imageBytes,
+    bool Function(String accumulated)? stopWhen,
     void Function(String fullOutput, int elapsedMs, String finishedReason)?
         onFinished,
   }) async* {
@@ -83,8 +84,19 @@ class LlmService {
     final output = StringBuffer();
     final sw = Stopwatch()..start();
     var lastLen = 0;
+    int? requestId;
+    var stopSent = false;
 
-    final requestId = await fllamaChat(request, (response, responseJson, done) {
+    void maybeStop() {
+      final predicate = stopWhen;
+      if (stopSent || predicate == null) return;
+      if (!predicate(output.toString())) return;
+      stopSent = true;
+      final id = requestId;
+      if (id != null) fllamaCancelInference(id);
+    }
+
+    final createdId = await fllamaChat(request, (response, responseJson, done) {
       if (!done && response.length > lastLen) {
         final delta = response.substring(lastLen);
         lastLen = response.length;
@@ -105,17 +117,22 @@ class LlmService {
           parseFinishedReason(responseJson),
         );
         if (!controller.isClosed) controller.close();
+        return;
       }
+      maybeStop();
     });
+    requestId = createdId;
+    // A stop condition may have fired before the id was known.
+    if (stopSent) fllamaCancelInference(createdId);
 
     unawaited(() async {
       await Future<void>.delayed(const Duration(minutes: 15));
       if (!controller.isClosed) {
-        controller.addError(StateError('Inference timed out (request $requestId).'));
+        controller.addError(StateError('Inference timed out (request $createdId).'));
         controller.close();
       }
     }());
-    requestIdOfLastCall = requestId;
+    requestIdOfLastCall = createdId;
 
     yield* controller.stream;
   }

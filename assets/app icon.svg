@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <!-- Background Shield Path -->
+    <path id="shield-base" d="M256,64 L416,128 C416,288 352,416 256,448 C160,416 96,288 96,128 Z" />
+
+    <!-- Upper Dark Green Clip Path -->
+    <clipPath id="top-clip">
+      <rect x="0" y="0" width="512" height="288" />
+    </clipPath>
+
+    <!-- Lower Light Green Clip Path -->
+    <clipPath id="bottom-clip">
+      <rect x="0" y="288" width="512" height="224" />
+    </clipPath>
+  </defs>
+
+  <!-- Top Dark Green Section -->
+  <use href="#shield-base" fill="#015C3A" clip-path="url(#top-clip)" />
+
+  <!-- Bottom Lighter Green Section -->
+  <use href="#shield-base" fill="#17A364" clip-path="url(#bottom-clip)" />
+
+  <!-- Medical Cross (White) -->
+  <path d="M228,124 H284 V160 H320 V216 H284 V252 H228 V216 H192 V160 H228 Z" fill="#FFFFFF" rx="4" />
+
+  <!-- Pulse/Heartbeat Line (White) -->
+  <path d="M120,288 H210 L234,332 L256,260 L278,332 L302,288 H392" 
+        fill="none" 
+        stroke="#FFFFFF" 
+        stroke-width="16" 
+        stroke-linecap="round" 
+        stroke-linejoin="round" />
+</svg>

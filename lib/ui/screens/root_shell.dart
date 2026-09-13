@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../interactions/drug_check_screen.dart';
 import '../../state/app_state.dart';
 import '../../triage/record.dart';
 import '../../vitals/monitor/monitor_screen.dart';
@@ -8,10 +9,11 @@ import 'chat_screen.dart';
 import 'history_screen.dart';
 import 'start_screen.dart';
 
-/// App shell (UI/UX plan §5.1, ADR-016/017): Start / History / Monitor / Ask
-/// AI. Settings is no longer a nav destination — each primary tab shows a
-/// top-left gear ([SettingsAction]) and pushes Settings as a route. Ask AI is
-/// a session carried by the shell; Monitor is the vitals-sensing tab.
+/// App shell (UI/UX plan §5.1, ADR-016/017/018): Start / History / Monitor /
+/// Drugs / Ask AI. Settings is no longer a nav destination — each primary tab
+/// shows a top-left gear ([SettingsAction]) and pushes Settings as a route.
+/// Ask AI is a session carried by the shell; Monitor is the vitals-sensing tab;
+/// Drugs is the offline drug-interaction checker.
 class RootShell extends StatefulWidget {
   const RootShell({super.key, required this.app});
 
@@ -24,15 +26,21 @@ class RootShell extends StatefulWidget {
 class _RootShellState extends State<RootShell> {
   int _tab = 0;
 
-  /// Context/title for the Ask AI session opened from History.
+  /// Context/title for the Ask AI session opened from History or Drugs.
   String? _chatContext;
   String? _chatTitle;
+  String? _chatContextLabel;
 
-  void _openChat({required String title, required String context}) {
+  void _openChat({
+    required String title,
+    required String context,
+    String? contextLabel,
+  }) {
     setState(() {
       _chatTitle = title;
       _chatContext = context;
-      _tab = 3;
+      _chatContextLabel = contextLabel;
+      _tab = 4;
     });
   }
 
@@ -45,57 +53,76 @@ class _RootShellState extends State<RootShell> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: IndexedStack(
-        index: _tab,
-        children: [
-          StartScreen(app: widget.app),
-          HistoryScreen(
-            app: widget.app,
-            onAskAi: (record) {
-              final name = record.patientName.isNotEmpty
-                  ? record.patientName
-                  : record.finalTier.shortLabel;
-              _openChat(
-                title: '$name · ${_shortTimestamp(record.timestamp)}',
-                context: buildRecordContext(record),
-              );
-            },
-          ),
-          MonitorScreen(app: widget.app, sessionFor: createMeasurementSession),
-          ChatScreen(
-            app: widget.app,
-            patientContext: _chatContext,
-            attachedTitle: _chatTitle,
-          ),
-        ],
-      ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _tab,
-        height: 80,
-        onDestinationSelected: (i) => setState(() => _tab = i),
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.medical_services_outlined),
-            selectedIcon: Icon(Icons.medical_services),
-            label: 'Start',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.history_outlined),
-            selectedIcon: Icon(Icons.history),
-            label: 'History',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.monitor_heart_outlined),
-            selectedIcon: Icon(Icons.monitor_heart),
-            label: 'Monitor',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.smart_toy_outlined),
-            selectedIcon: Icon(Icons.smart_toy),
-            label: 'Ask AI',
-          ),
-        ],
+    // Rebuild when AppState changes so the device-derived Tier 2 gate and model
+    // readiness are reflected once startup detection/download completes.
+    return AnimatedBuilder(
+      animation: widget.app,
+      builder: (context, _) => Scaffold(
+        body: IndexedStack(
+          index: _tab,
+          children: [
+            StartScreen(app: widget.app),
+            HistoryScreen(
+              app: widget.app,
+              onAskAi: (record) {
+                final name = record.patientName.isNotEmpty
+                    ? record.patientName
+                    : record.finalTier.shortLabel;
+                _openChat(
+                  title: '$name · ${_shortTimestamp(record.timestamp)}',
+                  context: buildRecordContext(record),
+                );
+              },
+            ),
+            MonitorScreen(app: widget.app, sessionFor: createMeasurementSession),
+            DrugCheckScreen(
+              app: widget.app,
+              onAskAi: (title, context) => _openChat(
+                title: 'Drug check',
+                context: context,
+                contextLabel: 'Medicines attached',
+              ),
+            ),
+            ChatScreen(
+              app: widget.app,
+              patientContext: _chatContext,
+              attachedTitle: _chatTitle,
+              contextLabel: _chatContextLabel,
+            ),
+          ],
+        ),
+        bottomNavigationBar: NavigationBar(
+          selectedIndex: _tab,
+          height: 80,
+          onDestinationSelected: (i) => setState(() => _tab = i),
+          destinations: const [
+            NavigationDestination(
+              icon: Icon(Icons.medical_services_outlined),
+              selectedIcon: Icon(Icons.medical_services),
+              label: 'Start',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.history_outlined),
+              selectedIcon: Icon(Icons.history),
+              label: 'History',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.monitor_heart_outlined),
+              selectedIcon: Icon(Icons.monitor_heart),
+              label: 'Monitor',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.medication_outlined),
+              selectedIcon: Icon(Icons.medication),
+              label: 'Drugs',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.smart_toy_outlined),
+              selectedIcon: Icon(Icons.smart_toy),
+              label: 'Ask AI',
+            ),
+          ],
+        ),
       ),
     );
   }

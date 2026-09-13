@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:healthguardian/services/llm_service.dart';
 import 'package:healthguardian/services/tier2_service.dart';
 import 'package:healthguardian/state/app_state.dart';
+import 'package:healthguardian/triage/inference_budget.dart';
 import 'package:healthguardian/triage/models.dart';
 import 'package:healthguardian/triage/tier2.dart';
 
@@ -34,6 +35,7 @@ class _FakeLlm extends LlmService {
     String? systemPrompt,
     List<Message>? history,
     Uint8List? imageBytes,
+    bool Function(String accumulated)? stopWhen,
     void Function(String fullOutput, int elapsedMs, String finishedReason)?
         onFinished,
   }) async* {
@@ -64,6 +66,8 @@ Tier2Service _service(List<_Reply> replies) {
 }
 
 void main() {
+  setUp(() => InferenceBudget.configure(usableContext: 2048));
+
   group('Tier2Service.generateSummary budgets and retries', () {
     test('success on first attempt returns populated assessment', () async {
       const replyText =
@@ -77,14 +81,14 @@ void main() {
       expect(result.summary, contains('- Stable vitals'));
       expect(result.requiresHumanVerification, isFalse);
       expect(_factoryCalls, 1);
-      expect(_maxTokensSeen.single, inInclusiveRange(1024, 1536));
-      expect(_contextSizeSeen, 4096);
+      expect(_maxTokensSeen.single, inInclusiveRange(512, 1536));
+      expect(_contextSizeSeen, InferenceBudget.requestedContext);
       expect(service.lastAttempts, contains('finish=stop'));
       expect(service.lastError, isEmpty);
     });
 
-    test('turns a fixable length-truncated first attempt into a retry '
-        'at the max budget', () async {
+    test('turns a fixable length-truncated first attempt into a retry',
+        () async {
       const validReply =
           '{"triage_level":5,"summary":"ok","requires_human_verification":false}';
       final service = _service([
@@ -96,8 +100,9 @@ void main() {
 
       expect(result.suggestion, TriageTier.p5);
       expect(_factoryCalls, 2);
-      expect(_maxTokensSeen[0], inInclusiveRange(1024, 1536));
-      expect(_maxTokensSeen[1], 1536, reason: 'retry runs at the cap');
+      expect(_maxTokensSeen[0], inInclusiveRange(512, 1536));
+      expect(_maxTokensSeen[1], _maxTokensSeen[0],
+          reason: 'retry uses the same fitting budget');
       expect(service.lastAttempts, contains('finish=length'));
     });
 
@@ -113,8 +118,8 @@ void main() {
       expect(result.summary, isEmpty);
       expect(result.requiresHumanVerification, isTrue);
       expect(_factoryCalls, 2);
-      expect(_maxTokensSeen[0], inInclusiveRange(1024, 1536));
-      expect(_maxTokensSeen[1], 1536);
+      expect(_maxTokensSeen[0], inInclusiveRange(512, 1536));
+      expect(_maxTokensSeen[1], _maxTokensSeen[0]);
       expect(service.lastError, contains('empty reply after retry'));
     });
 
@@ -132,7 +137,7 @@ void main() {
   });
 
   group('Tier2Service.chatTurn budgets', () {
-    test('uses the 3072 chat context and an in-range completion', () async {
+    test('uses the requested context and an in-range completion', () async {
       final service = _service([
         const _Reply('{"triage_level":5,"summary":"ok","requires_human_verification":false}', 'stop'),
       ]);
@@ -154,8 +159,8 @@ void main() {
 
       expect(chunks, isNotEmpty);
       expect(receivedReason, 'stop');
-      expect(_contextSizeSeen, 3072);
-      expect(_maxTokensSeen.single, inInclusiveRange(512, 1536));
+      expect(_contextSizeSeen, InferenceBudget.requestedContext);
+      expect(_maxTokensSeen.single, inInclusiveRange(384, 1024));
     });
   });
 }

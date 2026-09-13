@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../state/app_state.dart';
 import '../../triage/record.dart';
@@ -246,15 +247,123 @@ class _HistoryScreenState extends State<HistoryScreen> {
                   widget.onAskAi?.call(record);
                 },
                 icon: const Icon(Icons.smart_toy_outlined),
-                label: Text(
-                  widget.onAskAi == null
-                      ? 'Ask AI about this case'
-                      : 'Ask AI about this case',
-                ),
+                label: const Text('Ask AI about this case'),
+              ),
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                onPressed: () => _shareRecord(record),
+                icon: const Icon(Icons.share_outlined),
+                label: const Text('Share this record'),
               ),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  /// Opens the OS share sheet with the whole record card — tier, major
+  /// findings, vitals/complaints and the AI analysis — so it can go to
+  /// WhatsApp, Instagram, Facebook, SMS, etc.
+  Future<void> _shareRecord(TriageRecord record) async {
+    final tier = record.finalTier;
+    final vitals = (record.inputs['vitals'] as Map?) ?? const {};
+    final vitalItems = <String>[
+      if (vitals['rr'] != null)
+        'Resp. rate: ${vitals['rr']}/min'
+      else if (record.missingParams.contains('respiratory rate'))
+        'Resp. rate: Not measured',
+      if (vitals['spo2'] != null)
+        'SpO2: ${vitals['spo2']}%'
+      else if (vitals['spo2Missing'] == true)
+        'SpO2: Not measured',
+      if (vitals['sbp'] != null) 'BP: ${vitals['sbp']} mmHg',
+      if (vitals['hr'] != null) 'Heart rate: ${vitals['hr']}/min',
+      if (vitals['temp'] != null)
+        'Temp: ${vitals['temp']} °C'
+      else if (vitals['tempMissing'] == true)
+        'Temp: Not measured',
+      if (vitals['consciousness'] != null)
+        'Consciousness: ${vitals['consciousness']}',
+      if (vitals['capillaryRefill'] != null)
+        'Cap refill: ${vitals['capillaryRefill']}',
+      if (vitals['neonatalConsciousness'] != null)
+        'Neonatal state: ${vitals['neonatalConsciousness']}',
+      if (vitals['onOxygen'] == true) 'Oxygen: Yes',
+      if (vitals['copdCo2Retention'] == true) 'COPD: Yes',
+    ];
+    final complaints = <String>[
+      if (record.inputs['complaint'] is String)
+        record.inputs['complaint'] as String,
+      for (final c in (record.inputs['additionalComplaints'] as List?) ??
+          const <dynamic>[])
+        if (c is String) c,
+    ];
+    final notes = record.inputs['extraComplaintNotes'] as String?;
+
+    final buffer = StringBuffer()
+      ..writeln('Sehat Nigraan triage record')
+      ..writeln('${tier.label} - action ${tier.response}.')
+      ..writeln('Date: ${_formatTimestamp(record.timestamp)}');
+    if (record.patientName.isNotEmpty) {
+      buffer.writeln('Patient: ${record.patientName}');
+    }
+    buffer
+      ..writeln()
+      ..writeln('Major findings:');
+    if (record.mergeReasons.isEmpty) {
+      buffer.writeln('- No escalation reasons.');
+    } else {
+      for (final reason in record.mergeReasons) {
+        buffer.writeln('- $reason');
+      }
+    }
+    if (record.missingParams.isNotEmpty) {
+      buffer.writeln('Missing: ${record.missingParams.join(', ')}');
+    }
+    buffer
+      ..writeln()
+      ..writeln('Vitals:');
+    if (vitalItems.isEmpty) {
+      buffer.writeln('- None recorded.');
+    } else {
+      for (final item in vitalItems) {
+        buffer.writeln('- $item');
+      }
+    }
+    if (complaints.isNotEmpty) {
+      buffer.writeln('Complaints: ${complaints.join(', ')}');
+    }
+    if (notes != null && notes.trim().isNotEmpty) {
+      buffer.writeln('Notes: ${notes.trim()}');
+    }
+    buffer
+      ..writeln()
+      ..writeln('AI analysis:');
+    final tier2 = record.tier2;
+    if (tier2 == null) {
+      buffer.writeln('- None attached.');
+    } else {
+      buffer.writeln(
+        '- Suggestion: '
+        '${tier2.hasSuggestion ? tier2.suggestion!.name.toUpperCase() : 'no change'}',
+      );
+      if (record.aiEscalated) {
+        buffer.writeln(
+          '- AI raised urgency vs Tier 1 '
+          '(${record.finalTier.name.toUpperCase()}) - clinical review required.',
+        );
+      }
+      if (tier2.summary.isNotEmpty) buffer.writeln(tier2.summary);
+    }
+    buffer
+      ..writeln()
+      ..writeln('Decision support, not a diagnosis.');
+
+    await SharePlus.instance.share(
+      ShareParams(
+        subject: 'Triage record - ${record.finalTier.label}',
+        text: buffer.toString().trim(),
       ),
     );
   }

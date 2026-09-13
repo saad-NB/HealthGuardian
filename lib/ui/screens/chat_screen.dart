@@ -1,10 +1,12 @@
 import 'package:fllama/fllama.dart' show Message, Role;
 import 'package:flutter/material.dart';
 
+import '../../config/emergency_numbers.dart';
 import '../../prompts/tier2_prompts.dart';
 import '../../services/tier2_service.dart';
 import '../../state/app_state.dart';
 import '../../triage/inference_budget.dart';
+import '../../triage/reasoning_trace.dart';
 import '../text/markdown_lite.dart';
 import '../theme/app_tokens.dart';
 import 'settings_action.dart';
@@ -24,6 +26,7 @@ class ChatScreen extends StatefulWidget {
     this.service,
     this.patientContext,
     this.attachedTitle,
+    this.contextLabel,
   });
 
   final AppState app;
@@ -31,11 +34,16 @@ class ChatScreen extends StatefulWidget {
   /// Inject a fake in tests; defaults to a real [Tier2Service] for [app].
   final Tier2Service? service;
 
-  /// Optional read-only triage context attached to this session.
+  /// Optional read-only context attached to this session (a triage record or a
+  /// drug-interaction check).
   final String? patientContext;
 
   /// Optional case label shown in the app bar when [patientContext] is set.
   final String? attachedTitle;
+
+  /// Optional chip label for the attached context; defaults to the triage
+  /// wording so existing triage sessions are unchanged.
+  final String? contextLabel;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -140,9 +148,14 @@ class _ChatScreenState extends State<ChatScreen> {
       )) {
         buffer.write(delta);
         if (mounted) {
+          // Hide MedGemma's Draft/Critique/Revise trace while it streams; the
+          // final answer is extracted once generation stops.
+          final shown = ReasoningTrace.hasTrace(buffer.toString())
+              ? ''
+              : buffer.toString();
           setState(() {
             _messages[_messages.length - 1] =
-                _ChatMessage(fromUser: false, text: buffer.toString());
+                _ChatMessage(fromUser: false, text: shown);
           });
           _scrollToBottom();
         }
@@ -157,16 +170,26 @@ class _ChatScreenState extends State<ChatScreen> {
         });
       }
     } finally {
-      final full = buffer.toString().trim();
-      if (full.isNotEmpty) {
-        _history.add(Message(Role.assistant, full));
-      } else {
+      final raw = buffer.toString().trim();
+      final hadTrace = ReasoningTrace.hasTrace(raw);
+      final answer = ReasoningTrace.extractAnswer(raw);
+      if (answer.isNotEmpty) {
+        _history.add(Message(Role.assistant, answer));
+      } else if (raw.isEmpty) {
         _history.removeLast();
       }
       if (mounted) {
         setState(() {
+          _messages[_messages.length - 1] = _ChatMessage(
+            fromUser: false,
+            text: answer.isNotEmpty
+                ? answer
+                : (raw.isEmpty
+                    ? 'Sorry, the local model could not respond. Please try again.'
+                    : 'The model could not produce a final answer. Please try again.'),
+          );
           _busy = false;
-          if (full.isNotEmpty && _lastFinishReason == 'length') {
+          if (!hadTrace && answer.isNotEmpty && _lastFinishReason == 'length') {
             _messages.add(const _ChatMessage(
               fromUser: false,
               text: '',
@@ -207,12 +230,12 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
             ),
           if (_contextAttached)
-            const Padding(
-              padding: EdgeInsets.only(right: 12),
+            Padding(
+              padding: const EdgeInsets.only(right: 12),
               child: Center(
                 child: Chip(
-                  avatar: Icon(Icons.folder_copy_outlined, size: 18),
-                  label: Text('Triage context attached'),
+                  avatar: const Icon(Icons.folder_copy_outlined, size: 18),
+                  label: Text(widget.contextLabel ?? 'Triage context attached'),
                   visualDensity: VisualDensity.compact,
                 ),
               ),
@@ -246,7 +269,7 @@ class _ChatScreenState extends State<ChatScreen> {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                'This chat can see the completed triage. It is disposable — answers are not saved.',
+                'This chat can see the details attached from the app. It is disposable — answers are not saved.',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ),
@@ -331,14 +354,15 @@ class _ChatScreenState extends State<ChatScreen> {
             const SizedBox(height: 16),
             Text(
               _contextAttached
-                  ? 'Ask about this triage result — it runs on your phone.'
+                  ? 'Ask about the attached details — it runs on your phone.'
                   : 'Ask a health question — answers run on this phone (offline).',
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.bodyMedium,
             ),
             const SizedBox(height: 8),
             Text(
-              'Decision support, not a diagnosis. For emergencies call 112 now.',
+              'Decision support, not a diagnosis. For emergencies call '
+              '$emergencyNumbers.',
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.bodySmall,
             ),

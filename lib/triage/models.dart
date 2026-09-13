@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../config/emergency_numbers.dart';
 import '../vitals/models.dart' as model;
 import 'burn_profile.dart';
 
@@ -437,7 +438,7 @@ enum TriageTier {
     color: Color(0xFFD32F2F),
     response: 'Immediate',
     actionSteps: [
-      'Call 112 or ambulance right now.',
+      'Call $emergencyNumbers or an ambulance right now.',
       'Go to the nearest hospital now.',
       'Show this result to the ambulance or hospital team.',
     ],
@@ -574,9 +575,9 @@ class TriageAnswers {
     measurementMeta[field] = meta;
     switch (field) {
       case 'hr':
-        heartRate = value;
+        heartRate = value.roundToDouble();
       case 'rr':
-        respiratoryRate = value;
+        respiratoryRate = value.roundToDouble();
     }
   }
 
@@ -617,6 +618,25 @@ class TriageAnswers {
       }
     }
     activeComplaint = c;
+  }
+
+  /// Toggles [c] off the selected complaints (second tap on a card). When the
+  /// primary complaint is removed the next additional complaint is promoted so
+  /// the walkthrough always keeps a primary. Its Section E probe answers are
+  /// cleared by the caller so a later re-selection starts fresh.
+  void deselectComplaint(ChiefComplaint c) {
+    if (!hasComplaint(c)) return;
+    if (chiefComplaint == c) {
+      chiefComplaint = additionalComplaints.isNotEmpty
+          ? additionalComplaints.removeAt(0)
+          : null;
+    } else {
+      additionalComplaints.remove(c);
+    }
+    if (activeComplaint == c) {
+      activeComplaint = chiefComplaint ??
+          (additionalComplaints.isNotEmpty ? additionalComplaints.last : null);
+    }
   }
 
   /// Section E answered probes: probe id -> Yes/No (§8).

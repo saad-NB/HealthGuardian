@@ -22,8 +22,8 @@ Items explicitly out of scope for the current MVP. These are intentionally visib
 - **Reason:** Significant separate ML pipeline. Requires pill image dataset curation.
 
 ### Drug Interaction / Adverse Effect Checking
-- **Status:** Not started.
-- **Note:** NLM's RxNav Drug-Drug Interaction API was permanently discontinued Jan 2024. Any future implementation must use a static, locally-shipped, curated dataset, not a live third-party API.
+- **Status:** Shipped (v0.6.0). See `docs/DRUG_INTERACTIONS.md`, ADR-018.
+- **Note:** Uses a static, locally-shipped, public-domain dataset (NDF-RT + ONC + openFDA) — never a live third-party API (NLM's RxNav DDI API was permanently discontinued Jan 2024).
 
 ### Live Server-Side API Integration
 - **Status:** Explicitly excluded.
@@ -92,6 +92,16 @@ Design/approach: `docs/VITALS_SENSING.md` · Decisions: ADR-017.
 - [x] e2e: `vitalsHRSmoke` + `vitalsBRSmoke` scenarios w/ adb permission pre-grant (passed on Vivo V2061); full suite + `flutter analyze` green
 - [ ] In-triage "Use latest reading" (pull a stored Monitor reading into the vital step)
 - [ ] Calibration/pilot protocol vs reference (pulse oximeter / manual RR count) on 3–5 devices — pre-launch gate
+
+### v0.6.0 - Drug Interaction Checker
+Design: `docs/DRUG_INTERACTIONS.md` · Decisions: ADR-018.
+- [x] Public-domain dataset pipeline (NDF-RT + ONC + openFDA + NDFRT->RxNorm names)
+- [x] Bundled assets (`assets/data/ddi.json`, `drug_names.json`) + pubspec
+- [x] Pure-Dart `InteractionDataset` + `InteractionEngine` + 25 tests
+- [x] Drugs tab: autocomplete, chip list, results, blocking dialog, saved checks
+- [x] Optional on-device MedGemma explanation (`Tier2Service.explainInteraction`)
+- [ ] Full openFDA severity enrichment pass (resumable, rate-limited)
+- [ ] Pilot vs a reference interaction database (pre-launch gate)
 
 ### v1.0.0 - MVP Release
 - [ ] Voice input/output (STT/TTS)

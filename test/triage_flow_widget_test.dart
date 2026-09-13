@@ -21,14 +21,29 @@ Future<void> _tapContinue(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
+Future<void> _setAgeYears(WidgetTester tester, int years) async {
+  final display = find.byKey(const ValueKey('valueDisplay'));
+  await tester.ensureVisible(display);
+  await tester.pumpAndSettle();
+  await tester.tap(display);
+  await tester.pumpAndSettle();
+  await tester.enterText(
+    find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.byType(TextField),
+    ),
+    '$years',
+  );
+  await tester.tap(find.text('Save'));
+  await tester.pumpAndSettle();
+}
+
 Future<void> _goToDangerSigns(WidgetTester tester) async {
   await tester.pumpWidget(
     MaterialApp(theme: buildAppTheme(), home: const TriageFlowScreen()),
   );
-  await tester.ensureVisible(find.text('Adult'));
-  await tester.pumpAndSettle();
-  await tester.tap(find.text('Adult'));
-  await tester.pumpAndSettle();
+  // Age starts blank; enter 30 to select the adult (NEWS2) scale.
+  await _setAgeYears(tester, 30);
   await _tapContinue(tester); // confirm the patient info step
 }
 

@@ -3,9 +3,11 @@ import 'dart:async';
 import 'package:fllama/fllama.dart' show Message;
 import 'package:flutter/foundation.dart' show debugPrint;
 
+import '../prompts/interaction_prompts.dart';
 import '../prompts/tier2_prompts.dart';
 import '../state/app_state.dart';
 import '../triage/inference_budget.dart';
+import '../triage/reasoning_trace.dart';
 import '../triage/tier2.dart';
 import '../triage/tier2_parser.dart';
 import 'llm_service.dart';
@@ -29,9 +31,9 @@ class Tier2Service {
   final LlmService Function(AppState app, int maxTokens, int contextSize)
       _llmFactory;
 
-  /// True when the MedGemma GGUF is downloaded and the device can run it.
-  /// While false, the app is fully functional on Tier 1 alone.
-  bool get available => app.modelReady;
+  /// True when the MedGemma GGUF is downloaded and the device has enough RAM
+  /// to run it. While false, the app is fully functional on Tier 1 alone.
+  bool get available => app.modelReady && app.inferenceProfile.tier2Enabled;
 
   /// Last inference error string (empty on success). Useful for debugging
   /// fail-closed Tier 2 calls on-device.
@@ -78,18 +80,19 @@ class Tier2Service {
         tried++;
         error = null;
         buffer.clear();
-        final completion = tried == 1
-            ? InferenceBudget.summaryCompletion(promptTokens)
-            : InferenceBudget.summaryCompletionCap;
+        // Always size the reply to the room left in the usable window; the
+        // retry simply runs again (e.g. after a cold-start empty reply).
+        final completion = InferenceBudget.summaryCompletion(promptTokens);
         var finishedReason = 'unknown';
         final stepSw = Stopwatch()..start();
         try {
           await for (final delta in _llm(
             completion,
-            InferenceBudget.summaryContextSize,
+            InferenceBudget.requestedContext,
           ).chat(
             tier2SummaryUserPrompt(payload),
             systemPrompt: kTier2SummarySystem,
+            stopWhen: Tier2Parser.hasCompleteObject,
             onFinished: (_, _, reason) => finishedReason = reason,
           )) {
             buffer.write(delta);
@@ -151,10 +154,40 @@ class Tier2Service {
       history: history,
     );
     final completion = InferenceBudget.chatCompletion(promptTokens);
-    return _llm(completion, InferenceBudget.chatContextSize).chat(
+    return _llm(completion, InferenceBudget.requestedContext).chat(
       prompt,
       systemPrompt: systemPrompt,
       history: history,
+      stopWhen: ReasoningTrace.isLooping,
+      onFinished: onFinished,
+    );
+  }
+
+  /// Streams a plain-language explanation of a detected drug interaction for
+  /// the Drugs tab (ADR-018). The interaction itself is decided by the local
+  /// dataset; the model only explains it.
+  Stream<String> explainInteraction({
+    required String drugA,
+    required String drugB,
+    required String severityLabel,
+    required String referenceAdvice,
+    void Function(String fullOutput, int elapsedMs, String finishedReason)?
+        onFinished,
+  }) {
+    final prompt = interactionExplainPrompt(
+      drugA: drugA,
+      drugB: drugB,
+      severityLabel: severityLabel,
+      referenceAdvice: referenceAdvice,
+    );
+    final promptTokens = InferenceBudget.chatPromptTokens(
+      systemText: kInteractionExplainSystem,
+    );
+    final completion = InferenceBudget.chatCompletion(promptTokens);
+    return _llm(completion, InferenceBudget.requestedContext).chat(
+      prompt,
+      systemPrompt: kInteractionExplainSystem,
+      stopWhen: ReasoningTrace.isLooping,
       onFinished: onFinished,
     );
   }

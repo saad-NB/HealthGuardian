@@ -51,7 +51,9 @@ class _FilesScreenState extends State<FilesScreen> {
     return ListenableBuilder(
       listenable: widget.app,
       builder: (context, _) {
-        final statuses = widget.app.statuses ?? const <FileStatus>[];
+        final statuses = (widget.app.statuses ?? const <FileStatus>[])
+            .where((s) => !s.def.isMmproj)
+            .toList();
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
@@ -61,8 +63,8 @@ class _FilesScreenState extends State<FilesScreen> {
             ),
             const SizedBox(height: 4),
             Text(
-              'MedGemma-4B-it Q4_K_M + mmproj-F16 (from '
-              'unsloth/medgemma-4b-it-GGUF).',
+              'MedGemma-1.5-4B-it Q4_K_M (from '
+              'unsloth/medgemma-1.5-4b-it-GGUF).',
               style: Theme.of(context).textTheme.bodySmall,
             ),
             const SizedBox(height: 16),
@@ -71,8 +73,6 @@ class _FilesScreenState extends State<FilesScreen> {
               const SizedBox(height: 12),
             ],
             const SizedBox(height: 8),
-            _instructionsCard(),
-            const SizedBox(height: 16),
             Center(
               child: OutlinedButton.icon(
                 onPressed: _reload,
@@ -160,60 +160,4 @@ class _FilesScreenState extends State<FilesScreen> {
     );
   }
 
-  Widget _instructionsCard() {
-    final dir = widget.app.modelDirPath ?? '';
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Fastest path (adb push)',
-                style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            Text(
-              'Copy the GGUFs to this folder on the phone (USB, no permissions '
-              'needed), then press Refresh:',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            const SizedBox(height: 8),
-            SelectableText(
-              dir.isEmpty ? '(resolving model dir...)' : dir,
-              style: const TextStyle(
-                fontFamily: 'monospace',
-                fontSize: 12,
-                color: Colors.lightBlueAccent,
-              ),
-            ),
-            if (dir.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              SelectableText(
-                'adb push medgemma-1.5-4b-it-Q4_K_M.gguf "$dir/"',
-                style: const TextStyle(
-                  fontFamily: 'monospace',
-                  fontSize: 11,
-                  color: Colors.white70,
-                ),
-              ),
-              SelectableText(
-                'adb push mmproj-F16.gguf "$dir/"',
-                style: const TextStyle(
-                  fontFamily: 'monospace',
-                  fontSize: 11,
-                  color: Colors.white70,
-                ),
-              ),
-            ],
-            const SizedBox(height: 8),
-            Text(
-              'Total needed: ${(MedGemmaFiles.totalBytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GiB. '
-              'Required RAM on device: roughly the model size, so a 6 GB phone '
-              'is OK but tight.',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }

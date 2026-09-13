@@ -56,6 +56,15 @@ class Tier2Parser {
     );
   }
 
+  /// True once [raw] already contains a complete brace-balanced JSON object that
+  /// carries a triage or summary key. Used to cancel summary inference early so
+  /// the model cannot over-generate past a valid answer.
+  static bool hasCompleteObject(String raw) {
+    if (raw.isEmpty || !raw.trimRight().endsWith('}')) return false;
+    final decoded = _decodeFirstObject(raw);
+    return decoded != null && _hasTierOrSummaryKey(decoded);
+  }
+
   static TriageTier? _parseTier(Map<String, dynamic> json) {
     for (final key in _tierKeys) {
       final value = json[key];

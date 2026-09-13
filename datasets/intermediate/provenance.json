@@ -1,0 +1,121 @@
+{
+  "generated": "2026-09-12",
+  "purpose": "Drug Interaction Checker - bundled dataset provenance",
+  "licensePolicy": "commercial-clean only (public domain / CC0 / license-free); no NC sources",
+  "sources": [
+    {
+      "id": "ndf-rt",
+      "name": "VHA National Drug File - Reference Terminology",
+      "provider": "US Department of Veterans Affairs / NCI EVS",
+      "license": "US Government public domain",
+      "release": "2018.02.05 (final)",
+      "url": "https://evs.nci.nih.gov/ftp1/NDF-RT/",
+      "files": [
+        "datasets/ndf-rt/NDF-RT-interactions.csv",
+        "datasets/ndf-rt/NDFRT_RxNorm_mapping.csv",
+        "datasets/ndf-rt/NDFRT_TDE.xml"
+      ],
+      "rows": { "interactions": 269527, "pairsWithBothRxCui": 35178, "rxnormMap": 20281 },
+      "notes": "SEVERITY column is blank in all rows; pairs only. Public ontology uses role relations (CI_with/CI_ChemClass/CI_MoA/CI_PE and PK roles), no graded DDI table."
+    },
+    {
+      "id": "med-rt",
+      "name": "Medication Reference Terminology",
+      "provider": "NCI EVS",
+      "license": "US Government public domain",
+      "release": "2026.09.08",
+      "url": "https://evs.nci.nih.gov/ftp1/MED-RT/",
+      "files": [
+        "datasets/med-rt/Core_MEDRT_Accessory_Files.zip",
+        "datasets/med-rt/Core_MEDRT_DTS.zip"
+      ],
+      "verified": "2026-09-12",
+      "verdict": "No DDI pair table and no severity; accessory files are NDFRT<->MeSH and NDFRT<->RxNorm crosswalks only. Used for class normalization only."
+    },
+    {
+      "id": "onc-high-priority",
+      "name": "ONC high-priority DDI list (Phansalkar et al., JAMIA 2012; PMC3422823)",
+      "provider": "US HHS / ONC",
+      "license": "US Government public domain",
+      "file": "datasets/onc/ONC_High_Priority_Mapped.csv",
+      "rows": 1929,
+      "notes": "Class-expanded contraindicated pairs, '$'-delimited with DrugBank IDs (ignored). Used to force severity=contraindicated."
+    },
+    {
+      "id": "rxnorm-name-map",
+      "name": "NDFRT -> RxNorm name map",
+      "provider": "NLM (via dbmi-pitt extraction)",
+      "license": "license-free / public-domain-derived",
+      "file": "datasets/ndf-rt/NDFRT_RxNorm_mapping.csv",
+      "rows": 20281,
+      "notes": "';'-delimited rxcui;nui;drugname. Sufficient to name pairs; full RxNorm download not required."
+    },
+    {
+      "id": "openfda",
+      "name": "openFDA drug/label - static bulk export (DailyMed SPL)",
+      "provider": "US FDA",
+      "license": "US Government public domain",
+      "exportDate": "2026-09-11",
+      "endpoint": "drug/label",
+      "records": 262842,
+      "parts": 14,
+      "downloadMb": 1773,
+      "manifestSnapshot": "datasets/intermediate/openfda_manifest.json",
+      "files": [
+        "datasets/openfda/bulk/drug-label-0001-of-0014.json.zip",
+        "datasets/openfda/bulk/drug-label-0002-of-0014.json.zip",
+        "datasets/openfda/bulk/drug-label-0003-of-0014.json.zip",
+        "datasets/openfda/bulk/drug-label-0004-of-0014.json.zip",
+        "datasets/openfda/bulk/drug-label-0005-of-0014.json.zip",
+        "datasets/openfda/bulk/drug-label-0006-of-0014.json.zip",
+        "datasets/openfda/bulk/drug-label-0007-of-0014.json.zip",
+        "datasets/openfda/bulk/drug-label-0008-of-0014.json.zip",
+        "datasets/openfda/bulk/drug-label-0009-of-0014.json.zip",
+        "datasets/openfda/bulk/drug-label-0010-of-0014.json.zip",
+        "datasets/openfda/bulk/drug-label-0011-of-0014.json.zip",
+        "datasets/openfda/bulk/drug-label-0012-of-0014.json.zip",
+        "datasets/openfda/bulk/drug-label-0013-of-0014.json.zip",
+        "datasets/openfda/bulk/drug-label-0014-of-0014.json.zip"
+      ],
+      "scripts": [
+        "datasets/scripts/fetch_openfda_bulk.ps1",
+        "datasets/scripts/mine_openfda.py"
+      ],
+      "notes": "Bulk export has NO openfda.rxcui; labels are matched to ingredients by normalized generic_name/substance_name. Full run scanned 262842 labels, kept 56494. Enrichment re-grades existing pairs from a +/-250-char context window (never overrides contraindicated). New-pair discovery is stricter: single-ingredient labels only, interaction/contraindication sections only, both drug names in the same sentence, explicit severity phrase."
+    }
+  ],
+  "buildOutputs": {
+    "ddi": {
+      "file": "datasets/intermediate/ddi.csv",
+      "rows": 16593,
+      "severity": { "contraindicated": 1150, "severe": 1088, "moderate": 2076, "reported": 12279 }
+    },
+    "drugNames": { "file": "datasets/intermediate/drug_names.csv", "rows": 1193 },
+    "openfdaEnrichment": {
+      "file": "datasets/intermediate/ddi_openfda.csv",
+      "status": "complete",
+      "pairsEnriched": 3267,
+      "pairsMerged": 2295
+    },
+    "openfdaNewPairs": {
+      "file": "datasets/intermediate/ddi_openfda_new.csv",
+      "status": "complete",
+      "discoveryRule": "single-ingredient label; interaction/contraindication sections; both names in one sentence; explicit severity phrase",
+      "bundled": 869,
+      "severe": 243,
+      "moderate": 626
+    },
+    "bundledAssets": {
+      "ddi": { "file": "assets/data/ddi.json", "bytes": 555324 },
+      "drugNames": { "file": "assets/data/drug_names.json", "bytes": 30028 }
+    }
+  },
+  "excluded": [
+    "DDInter (CC BY-NC-SA)",
+    "DrugBank full (CC BY-NC)",
+    "SIDER (CC BY-NC-SA)",
+    "TWOSIDES (research/NC)",
+    "KEGG DRUG (restricted)",
+    "PrimeKG / BioSNAP / merged PDDI (DrugBank-derived)"
+  ]
+}

@@ -19,6 +19,7 @@ class StepperTiles extends StatelessWidget {
     this.canBeMissing = false,
     this.missing = false,
     this.onMissing,
+    this.emptyLabel = 'Not measured',
     this.manualMin,
     this.manualMax,
   });
@@ -37,6 +38,10 @@ class StepperTiles extends StatelessWidget {
   final bool missing;
   final VoidCallback? onMissing;
 
+  /// Text shown in place of the number while [missing] (e.g. an empty string
+  /// for the age field, which starts blank with just its unit visible).
+  final String emptyLabel;
+
   /// Hard bounds for typed entry; wider than the stepper range so a measured
   /// abnormal value can still be recorded without risking the pipeline.
   /// Defaults to [min]/[max] when not provided.
@@ -47,7 +52,7 @@ class StepperTiles extends StatelessWidget {
   double get _maxEntry => manualMax ?? max;
 
   String get _display {
-    if (missing) return 'Not measured';
+    if (missing) return emptyLabel;
     if (decimals > 0) return value.toStringAsFixed(decimals);
     return value.round().toString();
   }
@@ -65,7 +70,7 @@ class StepperTiles extends StatelessWidget {
             Expanded(child: _stepButton(context, true)),
           ],
         ),
-        if (canBeMissing) ...[
+        if (canBeMissing && onMissing != null) ...[
           const SizedBox(height: 16),
           TextButton.icon(
             onPressed: onMissing,

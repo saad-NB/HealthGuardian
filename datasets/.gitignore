@@ -1,0 +1,11 @@
+# Raw upstream downloads are NOT committed — reproduce with datasets/scripts/.
+# See datasets/README.md. Only authored/derived small files are tracked.
+
+ndf-rt/*
+med-rt/*
+rxnorm/*
+openfda/*
+!ndf-rt/.gitkeep
+!med-rt/.gitkeep
+!rxnorm/.gitkeep
+!openfda/.gitkeep

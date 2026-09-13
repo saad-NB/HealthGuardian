@@ -14,11 +14,31 @@ Future<void> _tap(WidgetTester tester, Finder finder) async {
 Future<void> _tapContinue(WidgetTester tester) =>
     _tap(tester, find.text('Continue'));
 
+Future<void> _setAgeYears(WidgetTester tester, int years) async {
+  await _tap(tester, find.byKey(const ValueKey('valueDisplay')));
+  await tester.enterText(
+    find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.byType(TextField),
+    ),
+    '$years',
+  );
+  await _tap(tester, find.text('Save'));
+}
+
 Future<void> _selectAge(WidgetTester tester, String age) async {
   await tester.pumpWidget(
     MaterialApp(theme: buildAppTheme(), home: const TriageFlowScreen()),
   );
-  await _tap(tester, find.text(age));
+  // Age starts blank; the band is derived from the entered number. The only
+  // explicit shortcut is "Newborn" for patients under 1 year.
+  if (age == 'Newborn') {
+    await _tap(tester, find.text('Newborn'));
+  } else if (age == 'Toddler') {
+    await _setAgeYears(tester, 2);
+  } else {
+    await _setAgeYears(tester, 30);
+  }
   await _tapContinue(tester); // confirm the patient info step
 }
 

@@ -562,14 +562,9 @@ void _restart() => setState(() {
             'Age',
             style: Theme.of(context).textTheme.titleMedium,
           ),
-          const SizedBox(height: 4),
-          Text(
-            'Enter the exact age to auto-select the age band below.',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
           const SizedBox(height: 12),
           StepperTiles(
-            value: (_answers.modifiers.ageYears ?? 30).toDouble(),
+            value: (_answers.modifiers.ageYears ?? 0).toDouble(),
             onChanged: (v) => setState(() {
               _answers.modifiers.ageYears = v.round();
               final bracket = AgeGroup.fromYears(_answers.modifiers.ageYears);
@@ -578,45 +573,26 @@ void _restart() => setState(() {
             min: 0,
             max: 120,
             step: 1,
-            unit: 'y',
+            unit: 'years',
             canBeMissing: true,
             missing: _answers.modifiers.ageYears == null,
-            onMissing: () => setState(() {
-              _answers.modifiers.ageYears = null;
+            emptyLabel: '',
+          ),
+          const SizedBox(height: 12),
+          AnswerChip(
+            label: AgeGroup.neonate.label,
+            detail: AgeGroup.neonate.detail,
+            icon: Icons.child_care,
+            selected: _answers.ageGroup == AgeGroup.neonate,
+            onSelected: () => setState(() {
+              _answers.ageGroup = AgeGroup.neonate;
+              _answers.modifiers.ageYears = 0;
             }),
           ),
-          const SizedBox(height: 4),
-          Text(
-            'Or select the age band directly:',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-          const SizedBox(height: 4),
-          for (final g in AgeGroup.values) ...[
-            AnswerChip(
-              label: g.label,
-              detail: g.detail,
-              icon: switch (g.scale) {
-                VitalScale.pews => Icons.child_care,
-                VitalScale.pedsNews2 => Icons.child_friendly,
-                VitalScale.news2 => g == AgeGroup.olderAdult
-                    ? Icons.elderly
-                    : Icons.person,
-              },
-              selected: _answers.ageGroup == g,
-              onSelected: () =>
-                  setState(() => _answers.ageGroup = g),
-            ),
-            const SizedBox(height: AppMetrics.answerGap),
-          ],
           const SizedBox(height: 8),
           Text(
             'Sex',
             style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Only used to decide whether the pregnancy question applies.',
-            style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(height: 12),
           for (final s in const [
