@@ -14,6 +14,7 @@ optionally layers an on-device **MedGemma-1.5-4B** advisory that can confirm or
 escalate the Tier 1 grade — never downgrade it.
 
 Read the full story in **[`docs/SPECIFICATION.md`](docs/SPECIFICATION.md)**.
+Watch the live demo video here: https://www.youtube.com/watch?v=6bVY9SXXEl0
 
 ## Features
 
