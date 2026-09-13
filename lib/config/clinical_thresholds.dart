@@ -9,7 +9,6 @@ library;
 ///   - NEWS2: Royal College of Physicians, "National Early Warning Score 2" (2017)
 ///   - GCS: Teasdale & Jennett, Lancet (1974); validated thresholds per RCS
 ///   - Burn TBSA: Rule of Nines (Wallace, 1951); Lund & Browder for pediatric
-///   - Skin classifier risk tiers: internal calibration (see docs/MODEL_CARDS/)
 
 enum TriageLevel { routine, urgent, emergency }
 
@@ -465,32 +464,6 @@ class BurnThresholds {
       'perineum', 'circumferential',
     ];
     return critical.any((c) => location.toLowerCase().contains(c));
-  }
-}
-
-/// Skin classifier risk tier thresholds.
-/// t_susp: threshold above which a class is "suspicious".
-/// t_high: threshold above which a class is "high-risk".
-/// Source: internal calibration — see docs/MODEL_CARDS/skin_classifier.md.
-class SkinClassifierThresholds {
-  SkinClassifierThresholds._();
-
-  /// Probability threshold for "suspicious" tier.
-  static const double tSuspicious = 0.4;
-
-  /// Probability threshold for "high-risk" tier.
-  static const double tHighRisk = 0.7;
-
-  /// Map classifier risk tier to triage level.
-  static TriageLevel triageLevel(String riskTier) {
-    switch (riskTier.toLowerCase()) {
-      case 'high':
-        return TriageLevel.emergency;
-      case 'suspicious':
-        return TriageLevel.urgent;
-      default:
-        return TriageLevel.routine;
-    }
   }
 }
 

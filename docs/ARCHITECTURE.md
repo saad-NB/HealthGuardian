@@ -12,7 +12,6 @@ Tier 1 -- Core Engine (deterministic, always runs, <1s, offline)
    +-- GCS scorer
    +-- NEWS2 scorer
    +-- Burn TBSA/degree (guided UI questions, no CV)
-   +-- Skin classifier (MobileNetV3-Large, TFLite INT8) [PLANNED]
    +-- Hard red-flag override layer
    +-- Decision table -> triage_level_base
    |
@@ -69,9 +68,8 @@ Independent of triage: a bundled, on-device DDI screening aid (ADR-018,
 
 See `docs/DECISIONS.md` for full ADRs. Summary:
 1. **fllama** over alternatives (llama.cpp direct, tflite LLM) -- best Flutter integration, streaming support, background isolate
-2. **MobileNetV3-Large** for skin classifier -- balance of accuracy and on-device speed
-3. **Text-only MedGemma** in production -- mmproj pathway evaluated and dropped due to upstream reliability issues
-4. **BLoC** for state management -- explicit, testable state transitions for safety-critical logic
+2. **Text-only MedGemma** in production -- mmproj pathway evaluated and dropped due to upstream reliability issues
+3. **BLoC** for state management -- explicit, testable state transitions for safety-critical logic
 
 ## File Structure
 
@@ -133,6 +131,5 @@ docs/
   ROADMAP.md                         Scope/deferred + milestone status
   MODEL_CARDS/                       Per-model training data and validation
 assets/
-  samples/                           Sample clinical images for testing
   data/                              Bundled DDI assets (ddi.json, drug_names.json)
 ```

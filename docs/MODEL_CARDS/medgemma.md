@@ -23,7 +23,7 @@
 
 ## Input Format
 
-Free-text patient history + structured Tier 1 findings (vitals, GCS, burn answers, skin risk tier).
+Free-text patient history + structured Tier 1 findings (vitals, GCS, complaint probes, sepsis screen, burn answers, modifiers).
 
 ## Output Format
 

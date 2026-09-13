@@ -8,9 +8,9 @@ Items explicitly out of scope for the current MVP. These are intentionally visib
 
 ### Eye Vision Classifier
 - **Status:** Dataset research completed (Mendeley Eye v2, 5 classes, 3,245 images). Not shipped this cycle.
-- **Reason:** Scope constraint. Skin classifier is the only vision component for MVP.
+- **Reason:** Scope constraint. Vision input is out of scope for MVP (ADR-020).
 - **Datasets:** Mendeley Eye v2 (n9zp473wfw.2), Conjunctivitis Recognition (CC BY 4.0).
-- **See:** `docs/DECISIONS.md` ADR-003.
+- **See:** `docs/DECISIONS.md` ADR-003, ADR-020.
 
 ### Throat/Oral Vision Classifier
 - **Status:** Dataset research completed (SMART-OM, 2,469 images, 4 classes). Not shipped this cycle.
@@ -22,7 +22,7 @@ Items explicitly out of scope for the current MVP. These are intentionally visib
 - **Reason:** Significant separate ML pipeline. Requires pill image dataset curation.
 
 ### Drug Interaction / Adverse Effect Checking
-- **Status:** Shipped (v0.6.0). See `docs/DRUG_INTERACTIONS.md`, ADR-018.
+- **Status:** Shipped. See `docs/DRUG_INTERACTIONS.md`, ADR-018.
 - **Note:** Uses a static, locally-shipped, public-domain dataset (NDF-RT + ONC + openFDA) — never a live third-party API (NLM's RxNav DDI API was permanently discontinued Jan 2024).
 
 ### Live Server-Side API Integration
@@ -64,13 +64,7 @@ Items explicitly out of scope for the current MVP. These are intentionally visib
 - [x] Boundary-value unit tests (reference-table driven, 244-test suite)
 - [ ] Vignette test suite (`/test/fixtures/vignettes/`) — backlog
 
-### v0.3.0 - Skin Classifier
-- [ ] MobileNetV3-Large training pipeline
-- [ ] TFLite INT8 conversion
-- [ ] Skin classifier integration
-- [ ] Risk-tier threshold calibration
-
-### v0.4.0 - Tier 2 Integration
+### v0.3.0 - Tier 2 Integration
 - [x] MedGemma Tier 2 prompt engineering (strict JSON schema, escalation-only)
 - [x] Structured JSON output via prompt + tolerant parser (fail-closed; GBNF **not** available in fllama — see ADR-014)
 - [x] Max() merge rule implementation (escalation-only, enforced in `Tier2Assessment.merge`)
@@ -79,7 +73,7 @@ Items explicitly out of scope for the current MVP. These are intentionally visib
 - [x] Post-triage context chat + Ask AI session (ephemeral; dynamic token budgets — ADR-015)
 - [x] Record v2.1 additive `tier2` block (tolerant `fromJson`, legacy v2.0 loads)
 
-### v0.5.0 - Vitals Sensing (In Progress)
+### v0.4.0 - Vitals Sensing (In Progress)
 Design/approach: `docs/VITALS_SENSING.md` · Decisions: ADR-017.
 - [x] Scaffold: `camera`/`record`/`permission_handler` deps, CAMERA + RECORD_AUDIO manifest, `lib/vitals/models.dart` + shared `MeasurementSession` (controller + view) + `permissions.dart`
 - [x] Shell restructure: 4-tab nav (Start · History · Monitor · Ask AI), Settings moved to a top-left icon route, Monitor tab placeholder
@@ -93,7 +87,7 @@ Design/approach: `docs/VITALS_SENSING.md` · Decisions: ADR-017.
 - [ ] In-triage "Use latest reading" (pull a stored Monitor reading into the vital step)
 - [ ] Calibration/pilot protocol vs reference (pulse oximeter / manual RR count) on 3–5 devices — pre-launch gate
 
-### v0.6.0 - Drug Interaction Checker
+### v0.5.0 - Drug Interaction Checker
 Design: `docs/DRUG_INTERACTIONS.md` · Decisions: ADR-018.
 - [x] Public-domain dataset pipeline (NDF-RT + ONC + openFDA + NDFRT->RxNorm names)
 - [x] Bundled assets (`assets/data/ddi.json`, `drug_names.json`) + pubspec

@@ -146,24 +146,7 @@ Map answers to the depth table above via a small decision tree (deterministic, s
 
 ---
 
-## 5. Skin Classifier Output (feeds Tier 1 as a fourth input source)
-
-*(Cross-reference: full model/dataset detail lives in the vision-system proposal doc — summarized here only for how it plugs into the scoring/decision algorithm.)*
-
-- Output: multi-label sigmoid confidences across the trained class set, plus a residual-Normal/no-finding signal.
-- Risk-tier mapping (as previously defined, subject to your team's final threshold-tuning on validation data):
-
-| Tier | Example classes | `t_susp` | `t_high` |
-|---|---|---|---|
-| High | pre-malignant/malignant classes | 0.25 | 0.65 |
-| Medium | e.g. cellulitis-type/infected presentations | 0.35 | 0.60 |
-| Low | eczema, psoriasis, acne, benign classes | 0.45 | 0.70 |
-
-*(These threshold values were provisionally proposed earlier in the project and must be re-validated against your actual trained model's calibration — do not treat as final without re-tuning per your validation protocol.)*
-
----
-
-## 6. Combined Final Decision Algorithm (Tier 1)
+## 5. Combined Final Decision Algorithm (Tier 1)
 
 This is the deterministic, auditable decision logic that produces `triage_level_base` — no LLM involvement.
 
@@ -172,7 +155,6 @@ INPUT:
   gcs_score, gcs_context (trauma / non-trauma)
   news2_aggregate, news2_single_param_flag (bool)
   burn_tbsa_percent, burn_depth, burn_location_flags[]
-  skin_findings[] (class, confidence) for each detected class
   free_text_keyword_flags[] ("cannot breathe", "severe bleeding", "chest pain", etc.)
   data_completeness_flags[] (which inputs are missing/partial)
 
@@ -186,7 +168,6 @@ STEP 1 — Hard Red-Flag Check (evaluated first, independent of all other logic)
   IF burn_tbsa_percent > 10: RETURN Emergency
   IF burn_location_flags includes face/airway/hands/genitals: RETURN Emergency
   IF any free_text_keyword_flags present: RETURN Emergency
-  IF any skin_findings[class].confidence >= t_high for a High-tier class: RETURN Emergency
 
 STEP 2 — Data completeness check:
   IF critical fields missing (e.g., SpO2 or RR absent from NEWS2 inputs):
@@ -201,15 +182,12 @@ STEP 3 — Aggregate/Moderate-Tier Evaluation (only reached if Step 1 found no h
   IF burn_depth == deep_partial_thickness: level = max(level, Urgent)
   IF burn_depth == superficial_partial_thickness: level = max(level, Urgent-if-combined-with-other-factor
       else informational)
-  IF any skin_findings[class].confidence >= t_high for Medium-tier class: level = max(level, Urgent)
-  IF any skin_findings[class].confidence >= t_susp for High-tier class (but below t_high):
-      level = max(level, Urgent)
   IF gcs_score in [9,12]: level = max(level, Urgent) [if trauma context, already
       covered by Step 1's <13 trauma rule — this branch mainly covers non-trauma context]
 
 STEP 4 — Routine/Self-care fallthrough:
-  IF level still == Routine AND news2_aggregate in [0,4] AND no concerning skin
-      finding AND no burn AND gcs_score in [13,15]:
+  IF level still == Routine AND news2_aggregate in [0,4] AND no burn AND
+      gcs_score in [13,15]:
       RETURN Routine / Self-care
   ELSE:
       RETURN level  (Urgent, from Step 3)
@@ -226,12 +204,11 @@ OUTPUT: triage_level_base, with a full list of which specific rule(s) fired
 
 ---
 
-## 7. Open Items for Manual Review
+## 6. Open Items for Manual Review
 
 1. Confirm exact NEWS2 +2 oxygen-uplift aggregation order against the official RCP chart (source documents reviewed give slightly different presentations of this — resolve against the primary RCP publication before finalizing `clinical_thresholds` config).
 2. Decide Scale 1 vs. Scale 2 SpO2 handling — recommendation above is Scale 1 always, confirm or override.
 3. Non-verbal/language-barrier GCS fallback path — needs explicit UX design, not just scoring logic.
 4. Fractional vs. whole-region burn TBSA marking — UI complexity vs. accuracy tradeoff.
 5. Whether repeat/tracked assessments (not just single-session) are in scope — affects whether NEWS2 observation-frequency guidance (§3.3) needs to be implemented as active app behavior or stays informational.
-6. Re-validate skin classifier `t_susp`/`t_high` thresholds against actual trained model calibration before treating §5's table as final.
-7. Step 3's handling of superficial-partial-thickness burns ("Urgent if combined with other factor, else informational") needs a concrete rule, not a soft description — decide and encode explicitly.
+6. Step 3's handling of superficial-partial-thickness burns ("Urgent if combined with other factor, else informational") needs a concrete rule, not a soft description — decide and encode explicitly.

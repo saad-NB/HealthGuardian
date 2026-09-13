@@ -3,7 +3,7 @@
 **Version:** 1.0  
 **Date:** 2026-09-05  
 **Status:** Draft for review  
-**Companion to:** `docs/tier-1-complete-spec.md`, `docs/ARCHITECTURE.md`, `docs/final-scope-skin-vision.md`
+**Companion to:** `docs/tier-1-complete-spec.md`, `docs/ARCHITECTURE.md`
 
 ---
 
@@ -225,10 +225,6 @@ Beyond WCAG 2.1 AA, this product adds **emergency-specific** requirements.
  └─┬────────────────────────────┘
    │  optional
  ┌─▼────────────────────────────┐
- │ Skin photo (G) — optional    │ ← camera/gallery, skippable 3×
- └─┬────────────────────────────┘
-   │  optional
- ┌─▼────────────────────────────┐
  │ Burn module (H) if selected  │
  └─┬────────────────────────────┘
    │
@@ -257,7 +253,7 @@ Beyond WCAG 2.1 AA, this product adds **emergency-specific** requirements.
 ### 6.1 Session entry (cold start → first tap)
 1. App opens to Start tab. **No onboarding, no login, no permission prompt blocking.**
 2. One primary button: **"Start Triage"** (Urdu + English on the button).
-3. Camera/photo permission is requested *only when* the user taps into Section G (skin photo) — not at launch.
+3. Camera/microphone permissions are requested *only when* the user reaches the vitals-sensing screen (PPG heart-rate / breathing estimate) — not at launch.
 
 ### 6.2 One-question-per-card pattern
 Each questionnaire card shares an invariant skeleton to reduce cognitive load:
@@ -347,17 +343,14 @@ Used for RR, SpO₂, SBP, HR, Temp:
 ### 7.5 Chief complaint
 - 18-option chip grid (responsive 3-col). Selecting → branch probes.
 - Chip shows icon + word; tabs fully; selection highlighted.
-- "Sores / rash" and "Burn" chips route to Skin/Burn modules.
+- "Sores / rash" routes to E-Skin probes; "Burn" routes to the Burn module.
 
 ### 7.6 Complaint probes (E-branch)
 - Reuses the one-question-per-card skeleton. 2–6 questions, ≤ 3 options.
 - Probe answers echo into the Tier 2 payload and the reasons string.
 
-### 7.7 Skin photo (G, optional)
-- One screen: "Add a photo if you have one — it helps."
-- Buttons: **Camera**, **Gallery**, **Skip (recommend without)**.
-- "Skip" is a real choice, visually equal; three skips in a row sum to "no photo" with no guilt.
-- While classifier runs: spinner + "Checking…" (offline NN). On failure: fail-closed — proceed silently with text-only triage (spec §10).
+### 7.7 Skin photo (G, optional — removed)
+> **Removed with ADR-020.** No photo/vision input ships; the heading is kept so ADR-020's "UI-plan §7.7" reference stays accurate. The camera is used only by vitals sensing (PPG), and burn assessment uses the guided body-map UI.
 
 ### 7.8 Burn module (H)
 - Mechanism chips → time chips → body map (tap regions) → TBSA stepper → depth appearance chips → airway/circumferential toggles.
@@ -511,7 +504,6 @@ Directly implements Tier 1 spec §21 (ADR-008).
 | First tap → first question | ≤ 500 ms |
 | Tier 1 compute | ≤ 1 s (spec §19) |
 | Question advance | ≤ 200 ms perceived |
-| Skin classify | ≤ 3 s (INT8 MobileNetV3-Large) |
 | Tier 2 total | Device-dependent; async, non-blocking |
 | Complete walkthrough | ≤ 3 min, ≤ 35 taps (spec Phase 2) |
 

@@ -2,7 +2,7 @@
 
 Offline-first, two-tier AI patient triage app for elderly and rural populations.
 
-Sehat Nigraan takes patient vitals, consciousness status (GCS), symptoms, medical history, and an optional skin photo, and produces a risk-banded triage category — Emergency / Urgent / Routine — along with a plain-language clinical summary. Built for low-to-mid-range Android devices with unreliable connectivity: the safety-critical path runs fully offline, with zero server dependency.
+Sehat Nigraan takes patient vitals, consciousness status (GCS), symptoms, and medical history, and produces a risk-banded triage category — Emergency / Urgent / Routine — along with a plain-language clinical summary. Built for low-to-mid-range Android devices with unreliable connectivity: the safety-critical path runs fully offline, with zero server dependency.
 
 **See:** `blueprints/` for project baseline and design docs, `docs/` for architecture, clinical sources, decisions, and roadmap.
 

@@ -26,28 +26,6 @@ Each significant design choice is recorded here with date, context, alternatives
 
 ---
 
-## ADR-002: MobileNetV3-Large for skin classifier
-
-**Date:** 2026-08-31
-**Status:** Accepted
-
-**Context:** We need a lightweight on-device vision classifier for skin conditions. Must run on low-to-mid-range Android devices with <50ms inference time. TFLite INT8 quantization required.
-
-**Alternatives considered:**
-1. **MobileNetV3-Small** -- Smaller (~2MB), faster, but lower accuracy. Baseline doc originally proposed this.
-2. **EfficientNet-Lite** -- Good accuracy/speed tradeoff, but larger model size and slower on CPU.
-3. **MedGemma native vision (mmproj)** -- Evaluated and dropped due to upstream reliability issues in llama.cpp Gemma ecosystem.
-
-**Decision:** MobileNetV3-Large with TFLite INT8 quantization (~5.5MB). Balances accuracy and speed for the skin classification task. Multi-label output for ~11 classes + residual-Normal.
-
-**Consequences:**
-- ~5.5MB model size, acceptable for on-device
-- INT8 quantization reduces accuracy slightly but enables CPU inference
-- Requires TFLite Flutter plugin (`tflite_flutter`)
-- Separate training pipeline (Python) before TFLite conversion
-
----
-
 ## ADR-003: Text-only MedGemma in production
 
 **Date:** 2026-08-30
@@ -58,11 +36,11 @@ Each significant design choice is recorded here with date, context, alternatives
 **Decision:** Production use is text-only. The mmproj vision pathway is evaluated but dropped due to:
 - Unresolved upstream mmproj/multimodal reliability issues in the current llama.cpp Gemma ecosystem
 - Memory pressure: loading both LLM and mmproj GGUF files simultaneously strains low-RAM devices
-- Skin classification handled by dedicated MobileNetV3 model instead
+- On-device vision/classifier input dropped entirely from scope (ADR-020)
 
 **Consequences:**
 - mmproj files still shipped for development/testing
-- Skin classifier is the sole vision component
+- No on-device image classifier ships; the app is text + phone-sensor input only (ADR-020)
 - Eye/throat vision classifiers deferred to roadmap
 
 ---
@@ -704,6 +682,45 @@ usable tokens**. (A unified cache / `n_parallel = 1` would drop the SWA floor to
   Tier 1.
 - `docs/PROMPTS.md` is the prompt reference; `docs/ARCHITECTURE.md` lists the new
   `device_capabilities.dart` / `reasoning_trace.dart`.
+
+---
+
+## ADR-020: Drop the on-device vision / skin-classifier path
+
+**Date:** 2026-09-13
+**Status:** Accepted
+
+**Context:** The original baseline planned an on-device skin-condition classifier
+(MobileNetV3, TFLite INT8) as a Tier 1 vision input (see removed ADR-002). The
+classifier was never trained or shipped, but dead scaffolding persisted in code
+(a `SkinClassifierThresholds` class, a `skin` slot in the engine's
+`contributingScores`, an unused `assets/samples/` pair) and across the docs
+(a model card, ADR-002, the roadmap's skin-classifier milestone, spec Section G, UI-plan §7.7,
+testing-plan §5.5). None of it was reachable at runtime.
+
+**Decision:** Remove the skin-classifier path entirely — code, docs, samples,
+and roadmap entries. The app's input surface is now patient-reported data +
+phone sensors (camera PPG for heart rate, microphone for breathing rate), the
+deterministic Tier 1 engine, the text-only MedGemma Tier 2, and the drug
+interaction checker. No TFLite model ships, and no `t_susp`/`t_high` thresholds
+exist. "Skin rash" remains available as a chief-complaint symptom chip; burn
+assessment stays as the guided body-map UI (no image classification).
+
+**Alternatives considered:**
+1. **Ship the classifier as originally planned (ADR-002)** — rejected: no training
+   pipeline or validated dataset within scope; adds a safety-critical model with
+   no clinical validation.
+2. **Keep the dead scaffolding for a future release** — rejected: YAGNI; it
+   confused the docs, bloated the record schema, and demanded tests for unused
+   code.
+
+**Consequences:**
+- `SkinClassifierThresholds`, the engine `skin` slot, `assets/samples/`, and all
+  skin-classifier documentation are removed.
+- The medical scope of the MVP is intentionally narrow: triage + vitals sensing +
+  drug-interaction screening + text-only MedGemma advisories.
+- Vision classification (eye, throat, anaemia, skin) remains a documented
+  roadmap item only — see `docs/ROADMAP.md`.
 
 
 

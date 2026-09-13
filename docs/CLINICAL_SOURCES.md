@@ -109,23 +109,7 @@ Every threshold and scoring rule used in Sehat Nigraan must be traceable to a pu
 
 ---
 
-## 4. Skin Classifier Risk Tiers
-
-**Source:** Internal calibration from MobileNetV3-Large training on SCIN + AZH datasets.
-
-| Risk Tier | Probability Threshold | Triage Level |
-|---|---|---|
-| Normal | <0.4 | Routine |
-| Suspicious | 0.4-0.7 | Urgent |
-| High | >0.7 | Emergency |
-
-**Note:** These thresholds require validation against clinical data before deployment. See `docs/MODEL_CARDS/skin_classifier.md`.
-
-**Implementation:** `lib/config/clinical_thresholds.dart` - `SkinClassifierThresholds` class.
-
----
-
-## 5. Hard Red-Flag Overrides
+## 4. Hard Red-Flag Overrides
 
 These are absolute safety nets derived from emergency medicine first-principles. If ANY flag fires, triage is forced to Emergency regardless of aggregate scores.
 
@@ -140,9 +124,9 @@ These are absolute safety nets derived from emergency medicine first-principles.
 
 **Implementation:** `lib/config/clinical_thresholds.dart` - `RedFlags` class.
 
-## 6. Missing Vital Signs Handling (SpO₂ / Temperature)
+## 5. Missing Vital Signs Handling (SpO₂ / Temperature)
 
-**Sources:** See Tier 1 spec §21.12 and ADR-008. Partial scoring relies on the NEWS2 tables and single-parameter escalation (§2 of this doc). The sepsis screen (§5 Appendix C) is the mandatory safety net when SpO₂ + temperature are both unavailable (spec §21.7).
+**Sources:** See Tier 1 spec §21.12 and ADR-008. Partial scoring relies on the NEWS2 tables and single-parameter escalation (§2 of this doc). The sepsis screen (Appendix C) is the mandatory safety net when SpO₂ + temperature are both unavailable (spec §21.7).
 
 **Policy summary:**
 - Compute NEWS2 from present parameters only; never score a missing parameter as 0.

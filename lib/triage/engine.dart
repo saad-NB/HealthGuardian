@@ -237,7 +237,6 @@ class TriageEngine {
           'tier': burn.tier!.label,
           'reason': burn.reason,
         },
-      'skin': null,
     };
 
     return TriageRecord.fromAnswers(

@@ -44,11 +44,10 @@ Rationale: red flags are OR-ed (`RedFlags.anyFire`). An OR-chain is only as good
 
 | In scope | Out of scope (this doc) |
 |---|---|
-| `RedFlags` (all 6 individual + composite `anyFire`) | Skin classifier model metrics (see `docs/MODEL_CARDS/skin_classifier.md`) |
-| `News2Thresholds` (all 8 component scorers + aggregate + risk bands) | MedGemma / Tier 2 output contract tests |
-| `GcsThresholds` (eye/verbal/motor, total, tier map) | End-to-end UI walkthrough tests |
-| `BurnThresholds` (TBSA adult/pediatric, critical locations) | Performance/latency benchmarks |
-| `SkinClassifierThresholds` (tier mapping) | Usability tests (`docs/ui-ux-plan.md` §14) |
+| `RedFlags` (all 6 individual + composite `anyFire`) | MedGemma / Tier 2 output contract tests |
+| `News2Thresholds` (all 8 component scorers + aggregate + risk bands) | End-to-end UI walkthrough tests |
+| `GcsThresholds` (eye/verbal/motor, total, tier map) | Performance/latency benchmarks |
+| `BurnThresholds` (TBSA adult/pediatric, critical locations) | Usability tests (`docs/ui-ux-plan.md` §14) |
 | **To-be-built:** `PedsNews2Thresholds`, `NeonatalPewsThresholds`, complaint probes, sepsis (qSOFA/pedSIRS), decision table, `max()` merge, modifier bumps | — |
 | Missing-vitals policy (spec §21) | — |
 
@@ -187,10 +186,11 @@ Table-driven from the reference (`docs/CLINICAL_SOURCES.md` §1, `News2Threshold
 - Pediatric bounds: 4.9 / **5 / 9.9 / 10** → routine/urgent/emergency.
 - `hasCriticalLocation` coverage: each critical substring ("face", "hands", "feet", "genitalia", "joint", "perineum", "circumferential") → true; a benign location ("thigh") → false; case-insensitive match asserted.
 
-### 5.5 Skin classifier mapping
+### 5.5 (Removed — skin classifier)
 
-- `triageLevel("high")` → emergency; `("suspicious")` → urgent; anything else → routine.
-- **Case-insensitive** required.
+> Former skin-classifier tier-mapping tests (e.g., `triageLevel("high")→emergency`)
+> were deleted with the classifier itself (ADR-020). P5 default stays covered
+> through the merge and vignette pillars.
 
 ### 5.6 Future scales (documented, tests to be added with implementation)
 
@@ -282,7 +282,7 @@ The exact numbers that MUST appear in tests (implement or fail — this is the a
 | Component | Target |
 |---|---|
 | `RedFlags` (all leaves + `anyFire`) | **100%** — mandatory (Pillar A proves it) |
-| `News2Thresholds` / `GcsThresholds` / `BurnThresholds` / `SkinClassifierThresholds` | **100%** branch on every scorer (target; any gap is flagged) |
+| `News2Thresholds` / `GcsThresholds` / `BurnThresholds` | **100%** branch on every scorer (target; any gap is flagged) |
 | Tier 1 decision logic (future merge/engine) | **100% branch** — non-negotiable per spec §5.1 |
 | Rest of app | Conventional (≥ 80% line) |
 

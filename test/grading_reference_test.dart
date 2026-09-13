@@ -281,22 +281,4 @@ void main() {
     });
   });
 
-  group('Skin classifier tier mapping', () {
-    test('risk tiers map to triage levels', () {
-      expect(SkinClassifierThresholds.triageLevel('high'),
-          TriageLevel.emergency);
-      expect(SkinClassifierThresholds.triageLevel('suspicious'),
-          TriageLevel.urgent);
-      expect(SkinClassifierThresholds.triageLevel('routine'),
-          TriageLevel.routine);
-    });
-    test('is case-insensitive', () {
-      expect(SkinClassifierThresholds.triageLevel('High'),
-          TriageLevel.emergency);
-    });
-    test('unknown tiers fail closed to routine', () {
-      expect(SkinClassifierThresholds.triageLevel('unknown'),
-          TriageLevel.routine);
-    });
-  });
-}
+  }

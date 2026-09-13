@@ -315,7 +315,7 @@ Applied **after** the max-merge. Multiple modifiers do **not** stack.
 ## 10. Stored Record (`computeRecord`)
 
 `_evaluate` builds a `TriageRecord` (`record.dart`) capturing
-`contributingScores { vital, gcs, complaint, sepsis, burn, skin:null }`,
+`contributingScores { vital, gcs, complaint, sepsis, burn }`,
 `mergeReasons`, `missingParams`, `substitutionApplied`, `safetyFlags
 (+vitalReviewRequired)`, `modifiers`, `gates`, and a `_inputsSnapshot` (raw inputs
 incl. burn `shaded` pairs) for reproducible offline reconstruction. Version `2.0`.

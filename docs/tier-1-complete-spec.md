@@ -3,7 +3,7 @@
 **Version:** 2.0  
 **Date:** 2026-09-05  
 **Status:** Draft for Clinical Review  
-**Companion to:** `docs/final-scope-skin-vision.md`, `docs/ARCHITECTURE.md`
+**Companion to:** `docs/ARCHITECTURE.md`
 
 ---
 
@@ -21,7 +21,7 @@
 7. [Section D — Chief Complaint & History](#7-section-d--chief-complaint--history)
 8. [Section E — Complaint-Driven Probes & Scoring](#8-section-e--complaint-driven-probes--scoring)
 9. [Section F — Sepsis Screen](#9-section-f--sepsis-screen)
-10. [Section G — Skin Classifier (Optional)](#10-section-g--skin-classifier-optional)
+10. [Section G — Skin Classifier (Optional, Removed)](#10-section-g--skin-classifier-optional-removed)
 11. [Section H — Burn Module](#11-section-h--burn-module)
 12. [Section I — Modifiers](#12-section-i--modifiers)
 13. [Merge Logic: Cross-Scale Integration](#13-merge-logic-cross-scale-integration)
@@ -61,7 +61,6 @@ Questionnaire (Sections A–I)
       ├─ D Chief complaint ────────────────────────► Branch selector for E
       ├─ E Complaint-driven probes + scoring ──────► Complaint tier + Tier 2 payload
       ├─ F Sepsis screen ──────────────────────────► Sepsis tier (NEW)
-      ├─ G Skin classifier (optional) ─────────────► Skin tier
       ├─ H Burn module ────────────────────────────► Burn rule tier
       ├─ I Modifiers ──────────────────────────────► Bump rules
       │
@@ -90,7 +89,6 @@ Questionnaire (Sections A–I)
 | Complaint-driven | D1 + E-branch answers | D, E | All ages |
 | Sepsis screen | Infection suspicion + qSOFA/pedSIRS | F | All ages |
 | Burn rule | Mechanism, TBSA, depth, airway, location, circumferential | H | All ages |
-| Skin tier | Classifier output | G | All ages |
 | Modifiers | Age, pregnancy, immunocompromise, MUAC, CFS | I | All ages |
 
 ---
@@ -515,24 +513,14 @@ All patients with fever, suspected infection, or immunocompromise **must** compl
 
 ---
 
-## 10. Section G — Skin Classifier (Optional)
+## 10. Section G — Skin Classifier (Optional, Removed)
 
-| ID | Item | Input | Output |
-|----|------|-------|--------|
-| G1 | Take photo of skin problem? | Camera/gallery | — |
-| G2 | Classifier output | Auto | Class + confidence |
-
-### Skin Tier Map
-
-| Class | Confidence | Tier | Action |
-|-------|-----------|------|--------|
-| Normal/benign | ≥90% | P5 | Reassure |
-| Benign, monitor | ≥90% | P4 | Watch |
-| Suspicious | Any | P3 | Review |
-| Urgent (cellulitis, abscess) | ≥70% | P2 | Treat |
-| Emergency (nec fasc, meningococcaemia) | ≥50% | **P1** | Immediate |
-
-**Fail-closed:** Classifier unavailable, low confidence, or error → **ignore classifier**, proceed with questionnaire only.
+> **Removed from scope (ADR-020).** The on-device skin-classifier / vision input
+> path was never shipped and has been dropped from code and documentation. The
+> section number is retained so the numbering of Sections H onward stays stable
+> for cross-references. The app's input surface is patient-reported data +
+> phone sensors (camera PPG, microphone); "Skin/rash" remains a chief-complaint
+> symptom chip, and burn assessment stays as the guided body-map UI.
 
 ---
 
@@ -690,21 +678,18 @@ TriageResult computeTier1(TriageInput t) {
     reasons.add("Burn: ${burnTier.reason}");
   }
 
-  // === 8. SKIN CLASSIFIER ===
-  final ScoredTier skinTier = t.skinResult ?? ScoredTier(Tier.p5, null, "No image");
-  
-  // === 9. MAX() MERGE ===
-  final candidates = [vitalTier, gcsTier, complaintTier, sepsisTier, burnTier, skinTier];
+  // === 8. MAX() MERGE ===
+  final candidates = [vitalTier, gcsTier, complaintTier, sepsisTier, burnTier];
   var merged = candidates.reduce((a, b) => a.tier.isMoreUrgentThan(b.tier) ? a : b);
   
-  // === 10. MODIFIER BUMP ===
+  // === 9. MODIFIER BUMP ===
   if (t.modifiers.requiresBump && merged.tier != Tier.p1) {
     final preBump = merged.tier;
     merged = ScoredTier(merged.tier.bump(), merged.score, merged.reason);
     reasons.add("Modifier bump: $preBump → ${merged.tier} (${t.modifiers.active.join(', ')})");
   }
 
-  // === 11. SAFETY CHECKS ===
+  // === 10. SAFETY CHECKS ===
   bool vitalReview = false;
   if (t.vitals.hasPhysiologicallyImpossibleValue) {
     vitalReview = true;
@@ -724,7 +709,6 @@ TriageResult computeTier1(TriageInput t) {
       'complaint': complaintTier.toJson(),
       'sepsis': sepsisTier.toJson(),
       'burn': burnTier.toJson(),
-      'skin': skinTier.toJson(),
       'merged': merged.tier.urgency,
       'modifiers': t.modifiers.toJson(),
     },
@@ -760,7 +744,6 @@ TriageResult computeTier1(TriageInput t) {
 | Sepsis (qSOFA) | ≥2 | 1 | — | — | 0 |
 | Sepsis (pedSIRS) | ≥2+infection | 1+infection | — | — | 0 |
 | Burn | See H rules | See H rules | — | Minor burns | Superficial only |
-| Skin | Emergency class | Urgent class | Suspicious | Benign | Normal |
 
 ---
 
@@ -806,8 +789,7 @@ TriageResult computeTier1(TriageInput t) {
     "gcs": {"score": 15, "tier": "P5", "assumed": false},
     "complaint": {"branch": "chest_pain", "score": 4, "tier": "P2"},
     "sepsis": {"qsofa": 1, "tier": "P2"},
-    "burn": null,
-    "skin": null
+    "burn": null
   },
   "modifiers": {"age": 72, "cfs": 6, "bumpApplied": true},
   "mergeReasons": [
@@ -891,7 +873,6 @@ If local ED dataset available:
 
 | Component | Failure | Safe State |
 |-----------|---------|------------|
-| Skin classifier | Not loaded / confidence <50% | Ignore; text-only triage |
 | GCS incomplete | <3 components entered | Use AVPU; if AVPU unclear, assume P |
 | Vitals missing | Any of B1–B7 missing | Cannot compute NEWS2; use danger gates + complaint only; **minimum P3** |
 | Age missing | Not entered | Assume adult thresholds (most conservative for vitals) |
