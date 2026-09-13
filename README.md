@@ -39,10 +39,11 @@ Read the full story in **[`docs/SPECIFICATION.md`](docs/SPECIFICATION.md)**.
 
 ### Android 📱
 
-1. Grab the prebuilt APK: **`SehatNigraan-android-debug.apk`** (repo root).
-   > The APK is ~233 MB and is a **debug/sideload build** (not Play-signed,
-   > not on the Play Store yet). It's git-ignored because it exceeds GitHub's
-   > file limit — build it yourself with the commands below if you'd rather.
+1. Grab the prebuilt APK: **`SehatNigraan-android.apk`** from the [GitHub Releases](../../releases/latest) page (or build it yourself — see below).
+   > The APK is **~85 MB**, a release/sideload build (not Play-signed, not on
+   > the Play Store yet). It's git-ignored — binaries live in GitHub Releases.
+   > A `flutter build apk --debug` build is also fine for testing but is
+   > slower and ~3× larger; use the release APK for everyday installs.
 2. Copy it to the phone, open it, and allow **"Install unknown apps"** for your
    file manager or browser when prompted.
 3. Tap **Install** → open **Sehat Nigraan**.
@@ -53,10 +54,11 @@ Tier 1, vitals sensing, and Drug Check work with **zero model files**. To enable
 
 ### Windows 💻
 
-1. Download and extract **`SehatNigraan-windows-release.zip`** (repo root).
-   > Use the **zip** — it contains the complete runnable build. The bare
-   > `healthguardian.exe` at the repo root needs its sibling files
-   > (`data/`, `flutter_windows.dll`, …), which only the zip provides.
+1. Download and extract **`SehatNigraan-windows-release.zip`** from the
+   [GitHub Releases](../../releases/latest) page.
+   > Use the **zip** — it contains the complete runnable build. A bare
+   > `healthguardian.exe` will not run by itself: it needs sibling files
+   > (`data/`, `flutter_windows.dll`, …) in the same folder, which the zip provides.
 2. Run `healthguardian.exe`.
 
 Tier 1, Drug Check, and chat work on Windows. Camera-PPG / microphone vitals
