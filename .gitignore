@@ -46,3 +46,8 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Prebuilt release artifacts
+# The debug APK (~233 MB) exceeds GitHub's 100 MB file limit, so it stays
+# local in the repo root; the Windows zip + exe are small enough to track.
+/SehatNigraan-android-debug.apk
